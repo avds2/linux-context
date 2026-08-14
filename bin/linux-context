@@ -1,0 +1,286 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+# Collection must never mutate the extracted source tree, even under sudo.
+export PYTHONDONTWRITEBYTECODE=1
+
+# Resolve symlinks so installation via /usr/local/bin/linux-context -> checkout/bin/linux-context
+# still finds the adjacent lib/, collectors/, profiles/, and VERSION files.
+_script=${BASH_SOURCE[0]}
+if command -v readlink >/dev/null 2>&1; then
+    _resolved=$(readlink -f -- "$_script" 2>/dev/null || true)
+    [[ -n "$_resolved" ]] && _script=$_resolved
+fi
+LCTX_PROJECT_ROOT=$(cd -- "$(dirname -- "$_script")/.." && pwd -P)
+export LCTX_PROJECT_ROOT
+
+source "$LCTX_PROJECT_ROOT/lib/common.sh"
+source "$LCTX_PROJECT_ROOT/lib/profile.sh"
+source "$LCTX_PROJECT_ROOT/lib/redact.sh"
+source "$LCTX_PROJECT_ROOT/lib/bundle.sh"
+
+[[ -r "$LCTX_PROJECT_ROOT/VERSION" ]] || fatal 'VERSION file is missing from the project root.'
+IFS= read -r LCTX_VERSION < "$LCTX_PROJECT_ROOT/VERSION" || true
+[[ "$LCTX_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || fatal "Invalid VERSION value: $LCTX_VERSION"
+
+LCTX_PROFILE='standard'
+LCTX_TARGETS='auto'
+LCTX_OUTPUT_DIR=''
+LCTX_ARCHIVE=1
+LCTX_KEEP_DIR=1
+LCTX_LIST_COLLECTORS=0
+LCTX_LIST_TARGETS=0
+LCTX_JOBS_OVERRIDE=''
+
+usage() {
+    cat <<'USAGE'
+linux-context - read-only Linux state exporter optimized for AI understanding
+
+Usage:
+  linux-context [options]
+
+Options:
+  --profile quick|standard|deep|max   Collection depth (default: standard)
+  --target NAME[,NAME...]             auto, all, or explicit target(s)
+  --jobs N                            Concurrent collectors (1..8; profile default)
+  --output DIR                        Bundle directory path
+  --no-archive                        Do not create .tar.gz archive
+  --remove-dir-after-archive          Remove unpacked bundle after archiving
+  --list-collectors                   List collector metadata
+  --list-targets                      List supported target names
+  -V, --version                       Show version
+  -h, --help                          Show help
+
+Recommended:
+  sudo ./bin/linux-context --profile max
+      Deepest sensible automatic whole-machine snapshot for initial AI use.
+
+  sudo ./bin/linux-context --profile max --target all
+      Exhaustive target-specific diagnostic acquisition, still bounded/read-only/redacted.
+
+AI contract:
+  context.json                        Canonical compact typed host graph/index.
+  meta/evidence.json                  Evidence routing catalog; open only on demand.
+  meta/collection.json                Collector/probe telemetry; not host context.
+  sections/                           Bounded redacted evidence; inspect only on demand.
+  meta/redaction.json                 Final credential/privacy-risk scan result.
+  meta/validation.json                Structural integrity result.
+
+Profiles control depth/budget. Targets control where extra diagnostic detail is
+spent. `max --target auto` is the recommended complete AI snapshot; `max
+--target all` is deliberately more exhaustive and may be slower/larger.
+USAGE
+}
+
+while (( $# )); do
+    case "$1" in
+        --profile) [[ $# -ge 2 ]] || fatal '--profile requires a value'; LCTX_PROFILE="$2"; shift 2 ;;
+        --target) [[ $# -ge 2 ]] || fatal '--target requires a value'; LCTX_TARGETS="$2"; shift 2 ;;
+        --jobs) [[ $# -ge 2 ]] || fatal '--jobs requires a value'; LCTX_JOBS_OVERRIDE="$2"; shift 2 ;;
+        --output) [[ $# -ge 2 ]] || fatal '--output requires a value'; LCTX_OUTPUT_DIR="$2"; shift 2 ;;
+        --no-archive) LCTX_ARCHIVE=0; shift ;;
+        --remove-dir-after-archive) LCTX_KEEP_DIR=0; shift ;;
+        --list-collectors) LCTX_LIST_COLLECTORS=1; shift ;;
+        --list-targets) LCTX_LIST_TARGETS=1; shift ;;
+        -V|--version) printf 'linux-context %s\n' "$LCTX_VERSION"; exit 0 ;;
+        -h|--help) usage; exit 0 ;;
+        *) fatal "Unknown option: $1" ;;
+    esac
+done
+
+export LCTX_VERSION LCTX_PROFILE LCTX_TARGETS LCTX_OUTPUT_DIR
+
+# Successful collection requires these dependencies for every profile. Keeping one
+# production security path is safer than silently degrading on lower profiles.
+command_exists python3 || fatal 'Python 3.9+ is required for typed compilation and redaction.'
+command_exists timeout || fatal 'GNU/coreutils timeout is required for bounded read-only probes.'
+
+load_profile "$LCTX_PROFILE"
+if [[ -n "$LCTX_JOBS_OVERRIDE" ]]; then LCTX_JOBS="$LCTX_JOBS_OVERRIDE"; fi
+[[ "$LCTX_JOBS" =~ ^[1-8]$ ]] || fatal '--jobs/profile LCTX_JOBS must be an integer from 1 to 8'
+export LCTX_JOBS
+
+init_redaction
+[[ "$LCTX_REDACTION_ASSURANCE" == enhanced ]] || fatal 'Enhanced redaction assurance is mandatory.'
+
+mapfile -t collectors < <(find "$LCTX_PROJECT_ROOT/collectors" -type f -name '*.sh' -perm -u+x | LC_ALL=C sort)
+
+if (( LCTX_LIST_COLLECTORS )); then
+    printf 'ID\tMIN_PROFILE\tTARGETS\tPRIVILEGE\tBASELINE\tDESCRIPTION\n'
+    for collector in "${collectors[@]}"; do "$collector" --meta; done
+    exit 0
+fi
+
+supported_targets() {
+    local collector meta id min targets privilege baseline description token
+    printf '%s\n' auto all
+    for collector in "${collectors[@]}"; do
+        meta=$("$collector" --meta) || continue
+        IFS=$'\t' read -r id min targets privilege baseline description <<< "$meta"
+        for token in $targets; do printf '%s\n' "$token"; done
+    done | LC_ALL=C sort -u
+}
+
+if (( LCTX_LIST_TARGETS )); then supported_targets; exit 0; fi
+
+# Validate and canonicalize the target expression once.
+mapfile -t _supported < <(supported_targets)
+IFS=',' read -ra _requested <<< "$LCTX_TARGETS"
+_normalized_requested=()
+_special_target=''
+for _target in "${_requested[@]}"; do
+    normalize_one_line_into _target "$_target"
+    [[ -n "$_target" ]] || fatal 'empty target name'
+    printf '%s\n' "${_supported[@]}" | grep -Fxq -- "$_target" || fatal "Unknown target: $_target (use --list-targets)"
+    _normalized_requested+=("$_target")
+    if [[ "$_target" == auto || "$_target" == all ]]; then _special_target="$_target"; fi
+done
+if [[ -n "$_special_target" && ${#_normalized_requested[@]} -ne 1 ]]; then
+    fatal "--target $_special_target must be used alone"
+fi
+LCTX_TARGETS=$(IFS=,; printf '%s' "${_normalized_requested[*]}")
+export LCTX_TARGETS
+
+init_bundle
+on_exit() {
+    local rc=$?
+    trap - EXIT
+    cleanup_tmp || true
+    exit "$rc"
+}
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+matches_target() {
+    local collector_targets="$1" baseline="$2" token ctoken
+    local -a requested=()
+    target_is_auto && return 0
+    target_is_all && return 0
+    [[ "$baseline" == 1 ]] && return 0
+    IFS=',' read -ra requested <<< "$LCTX_TARGETS"
+    for token in "${requested[@]}"; do
+        normalize_one_line_into token "$token"
+        for ctoken in $collector_targets; do [[ "$token" == "$ctoken" ]] && return 0; done
+    done
+    return 1
+}
+
+prepare_collector_stage() {
+    local __dest="$1" id="$2" safe __stage
+    safe_name_into safe "$id"
+    __stage="$LCTX_STAGE_ROOT/collectors/$safe"
+    mkdir -p "$__stage" "$LCTX_STAGE_ROOT/evidence/$safe"
+    : > "$__stage/facts.records"
+    : > "$__stage/entities.records"
+    : > "$__stage/entity-attrs.records"
+    : > "$__stage/relations.records"
+    : > "$__stage/artifacts.records"
+    : > "$__stage/probes.records"
+    : > "$__stage/notes.tsv"
+    printf -v "$__dest" '%s' "$__stage"
+}
+
+run_collector() {
+    local collector="$1" meta id min_profile targets privilege baseline description safe stage start_ms end_ms duration rc status detail
+    meta=$("$collector" --meta 2>/dev/null) || return 0
+    IFS=$'\t' read -r id min_profile targets privilege baseline description <<< "$meta"
+    safe_name_into safe "$id"
+    prepare_collector_stage stage "$id"
+    lctx_python - "$stage/collector.json" "$id" "$min_profile" "$targets" "$privilege" "$baseline" "$description" <<'PY' 2>/dev/null || true
+import json,sys
+p,*v=sys.argv[1:]
+with open(p, "w", encoding="utf-8") as fh:
+    json.dump(dict(zip(["id","min_profile","targets","privilege","baseline","description"],v)), fh, separators=(",",":"), allow_nan=False)
+PY
+    epoch_millis_into start_ms
+    status='collected'; detail="$description"
+
+    if ! profile_allows "$LCTX_PROFILE" "$min_profile"; then
+        status='skipped'; detail="requires profile >= $min_profile"
+    elif ! matches_target "$targets" "$baseline"; then
+        status='skipped'; detail='target mismatch'
+    elif [[ "$privilege" == root && "$EUID" -ne 0 ]]; then
+        status='unavailable'; detail='requires root'
+    else
+        set +e; "$collector" --detect >/dev/null 2>&1; rc=$?; set -e
+        if (( rc != 0 )); then
+            status='unavailable'; detail='not detected or not accessible'
+        else
+            log INFO "collecting $id"
+            set +e
+            LCTX_SECTION_DIR="$LCTX_STAGE_ROOT/evidence/$safe" \
+            LCTX_FACTS_RECORDS="$stage/facts.records" \
+            LCTX_ENTITIES_RECORDS="$stage/entities.records" \
+            LCTX_ENTITY_ATTRS_RECORDS="$stage/entity-attrs.records" \
+            LCTX_RELATIONS_RECORDS="$stage/relations.records" \
+            LCTX_ARTIFACTS_RECORDS="$stage/artifacts.records" \
+            LCTX_PROBES_RECORDS="$stage/probes.records" \
+            LCTX_NOTES_FILE="$stage/notes.tsv" \
+            "$collector" --run
+            rc=$?
+            set -e
+            if (( rc != 0 )); then status='partial'; detail="collector exit $rc"; fi
+        fi
+    fi
+    epoch_millis_into end_ms; duration=$((end_ms-start_ms))
+    normalize_one_line_into detail "$detail"
+    printf '%s\t%s\t%s\t%s\n' "$id" "$status" "$duration" "$detail" > "$stage/status.tsv"
+    return 0
+}
+
+# Collectors write to isolated per-collector staging trees, so they are safe to
+# run concurrently. Prefer a rolling worker window when Bash supports wait -n.
+if help wait 2>/dev/null | grep -q -- '-n'; then
+    active_jobs=0
+    for collector in "${collectors[@]}"; do
+        run_collector "$collector" &
+        active_jobs=$((active_jobs+1))
+        if (( active_jobs >= LCTX_JOBS )); then
+            wait -n || true
+            active_jobs=$((active_jobs-1))
+        fi
+    done
+    while (( active_jobs > 0 )); do wait -n || true; active_jobs=$((active_jobs-1)); done
+else
+    pids=()
+    for collector in "${collectors[@]}"; do
+        run_collector "$collector" & pids+=("$!")
+        if (( ${#pids[@]} >= LCTX_JOBS )); then
+            for pid in "${pids[@]}"; do wait "$pid" || true; done
+            pids=()
+        fi
+    done
+    for pid in "${pids[@]}"; do wait "$pid" || true; done
+fi
+
+log INFO 'pruning raw evidence to aggregate profile budget before redaction'
+prune_staging_evidence || fatal 'pre-redaction evidence pruning/validation failed'
+log INFO 'redacting and scanning private collector staging'
+secure_staging || fatal 'private staging redaction/residual scan failed; no raw evidence was released'
+install_sanitized_stage
+log INFO 'compiling compact canonical AI context'
+compile_context || fatal "canonical context compilation/validation failed: $LCTX_OUTPUT_DIR/meta/validation.json"
+# Defense in depth: sanitize compiler-generated JSON/metadata too, then rescan.
+sanitize_bundle_text_in_place || fatal 'final bundle redaction pass failed'
+final_scan || fatal "residual secret-risk scan failed: $LCTX_OUTPUT_DIR/meta/redaction.json"
+# Redaction rewrites first-party JSON structurally, so validate once more afterward.
+compile_validation_only() {
+    lctx_python - "$LCTX_OUTPUT_DIR/context.json" "$LCTX_OUTPUT_DIR/meta/validation.json" <<'PY'
+import json,sys
+for p in sys.argv[1:]:
+    with open(p, encoding="utf-8") as fh: json.load(fh)
+PY
+}
+compile_validation_only || fatal 'post-redaction JSON integrity check failed'
+write_manifest
+publish_bundle
+
+archive_path=''
+if (( LCTX_ARCHIVE )); then archive_path=$(archive_bundle); fi
+cleanup_tmp
+if (( LCTX_ARCHIVE && ! LCTX_KEEP_DIR )); then remove_published_bundle; fi
+
+printf 'Bundle: %s\n' "$LCTX_OUTPUT_DIR"
+if [[ -n "$archive_path" ]]; then printf 'Archive: %s\n' "$archive_path"; fi
+exit 0

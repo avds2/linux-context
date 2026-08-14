@@ -1,0 +1,19 @@
+# Generated diagnostic bundles
+linux-context-*/
+linux-context-*.tar.gz
+linux-context-*.tar.gz.sha256
+
+# Python/editor artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.idea/
+.vscode/
+*.swp
+*~
+
+# Test/coverage scratch
+.coverage
+.pytest_cache/
+.DS_Store

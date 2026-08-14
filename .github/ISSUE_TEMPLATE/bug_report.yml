@@ -1,0 +1,54 @@
+name: Bug report
+description: Report a reproducible linux-context defect
+title: "[bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not attach an unreviewed diagnostic bundle to a public issue.** Bundles are redacted defensively, but they intentionally contain infrastructure details. Share only the minimum sanitized excerpts needed to reproduce the problem.
+  - type: input
+    id: version
+    attributes:
+      label: linux-context version
+      description: Output of `./bin/linux-context --version`
+      placeholder: linux-context 1.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Profile
+      options: [quick, standard, deep, max]
+    validations:
+      required: true
+  - type: input
+    id: targets
+    attributes:
+      label: Target expression
+      placeholder: auto, all, network,docker, ...
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Distribution/version, kernel, architecture, privilege mode, and any relevant subsystem versions. Remove hostnames, addresses, IDs, and secrets unless required.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior / sanitized logs
+    validations:
+      required: true

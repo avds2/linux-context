@@ -1,0 +1,24 @@
+name: Feature request
+description: Propose a collector, format improvement, or diagnostic capability
+title: "[feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What Linux/AI troubleshooting question cannot be answered well today?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Proposed evidence / structured model
+      description: Prefer the smallest read-only, passive, secret-safe source that answers the question.
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Security and privacy considerations
+      description: Could the source contain credentials, argv/env, user content, remote identities, persistent identifiers, or trigger active network/device behavior?
+    validations:
+      required: true

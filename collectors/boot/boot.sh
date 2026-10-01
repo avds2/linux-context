@@ -77,14 +77,8 @@ collector_collect() {
             [[ -r /boot/grub/grub.cfg ]] && capture_file_if_readable grub_cfg /boot/grub/grub.cfg 524288 75 || true
         fi
         # Avoid GRUB modules/locales and other irrelevant boot-tree bulk.
-        run_shell_capture boot_inventory 10 262144 '
-            for d in /boot /boot/efi /efi; do
-                [ -d "$d" ] || continue
-                find "$d" -xdev -maxdepth 4 -type f \
-                  \( -name "vmlinuz*" -o -name "linux*" -o -name "initramfs*" -o -name "initrd*" \
-                     -o -name "*.efi" -o -name "*.conf" -o -name "grub.cfg" -o -path "*/loader/entries/*" \) \
-                  -printf "%p\t%s\n" 2>/dev/null
-            done | LC_ALL=C sort -u' || true
+        run_capture boot_inventory 10 262144 --source 'boot file metadata (same filesystem, no contents)' -- \
+            python3 -B -S "$COLLECTOR_LIB_DIR/file_inventory.py" --depth 4 --boot --max-items "$LCTX_MAX_ITEMS" /boot /boot/efi /efi || true
     fi
 }
 collector_main "$@"

@@ -28,6 +28,19 @@ Current domains include:
 
 Targets tell eligible collectors where high-cardinality or expensive diagnostic detail is worthwhile. `auto` keeps the broad machine model compact. `all` satisfies every target-specific depth gate but remains subject to the same read-only, redaction, per-probe, aggregate evidence and AI-entrypoint bounds.
 
+Automatic Bluetooth discovery reports `workstation.bluetooth.adapter_count`
+from `/sys/class/bluetooth`, when readable. This is the kernel adapter inventory,
+not a claim about BlueZ connectivity or paired devices. Explicit
+`bluetooth`/`workstation`/`all` targets additionally query the bounded daemon
+controller inventory; failures leave that count unknown. Desktop device names
+remain excluded from the automatic model.
+
+Package counts reuse a successful bounded inventory; Debian entries must be in
+the `installed` state. A truncated inventory exposes a `*_limited` flag rather
+than an exact count, and a failed command never establishes a zero count.
+Systemd `modeled_service_count` counts retained entities; `relevant_service_count`
+also includes relevant units that exceeded the item cap.
+
 ## Collector output priorities
 
 Prefer structured observations over raw text. Persistent evidence should answer a likely follow-up question that cannot be represented economically in the graph. Bulk default configuration, transient user activity and exhaustive inventories should generally be target-only.

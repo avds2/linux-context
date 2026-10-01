@@ -3,7 +3,7 @@ set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 PYTHONPATH="$ROOT/lib" python3 -B -S - <<'PY'
-from ai_view import encode, decode, compact
+from ai_view import encode, encode_v1, decode, compact, same_value
 original={'schema':{'version':5},'facts':[['hardware.memory.total_bytes',17179869184,0]],
           'provenance':[['hardware.memory','fixture','observed',1.0]],
           'entities':[], 'relations':[], 'indexes':{'evidence':'meta/evidence.json'},
@@ -17,11 +17,40 @@ for i in range(32):
     original['relations'].append(['host:local','has_memory_device',f'memory-device:{i}',[0]])
 view=encode(original)
 assert decode(view)==original
+assert decode(encode_v1(original))==original
+assert view["encoding"]["version"]==2
 assert original['entities'][0][1]=='memory_device' # no caller mutation
 assert len(compact(view)) < len(compact(original))
 assert decode({'schema':{'version':5},'entities':[]})=={'schema':{'version':5},'entities':[]}
 assert decode(encode({'entities':[],'relations':[]}))=={'entities':[],'relations':[]}
 assert decode(encode({'indexes':{'graph':'meta/graph.json'},'coverage':{'graph_deferred':True}}))=={'indexes':{'graph':'meta/graph.json'},'coverage':{'graph_deferred':True}}
+# Mixed IDs, duplicate values, conflicting observations and optional type rows
+# survive both generations. Labels that equal IDs/suffixes exercise v2 defaults.
+import random, copy
+rng=random.Random(42)
+for _ in range(50):
+    doc={'entities':[], 'relations':[], 'facts':[['literal',None,0]]}
+    for i in range(rng.randint(1,80)):
+        label=rng.choice([f'node:{i}',str(i),f'label-{i}'])
+        attrs={f'key-{j}':rng.choice([[False,0],["UP",0],[i,1],[["old",0],["new",1]]]) for j in range(rng.randint(0,8))}
+        doc['entities'].append([f'node:{i}',rng.choice(['service','device']),label,attrs,[0]])
+        doc['relations'].append(['node:0','owns',f'node:{i}',[1]])
+    doc['relations'].append(['literal-external-id','other','node:0',[]])
+    assert same_value(decode(encode(doc)),doc)
+typed={'entities':[['n:0','thing','0',{'state':[True,0]},[0]],
+                   ['n:1','thing','1',{'state':[1,0]},[0]],
+                   ['n:2','thing','2',{'state':[1.0,0]},[0]]], 'relations':[]}
+assert same_value(decode(encode(typed)),typed)
+assert same_value(decode(encode_v1(typed)),typed)
+from compile import merge_value
+assert merge_value([True,0],1,0)==[[True,0],[1,0]]
+bad=copy.deepcopy(view); bad['relations'][0][0]=-1
+try:
+    decode(bad)
+except ValueError:
+    pass
+else:
+    raise AssertionError('negative endpoint reference was accepted')
 PY
 "$ROOT/bin/linux-context" --profile standard --no-archive --output "$t/bundle" > "$t/stdout" 2> "$t/stderr"
 python3 -B -S "$ROOT/lib/ai_view.py" decode "$t/bundle/context.ai.json" "$t/decoded.json"

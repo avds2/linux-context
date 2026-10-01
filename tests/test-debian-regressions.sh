@@ -33,12 +33,6 @@ fake="$t/fake-docker"; mkdir -p "$fake"
 # --host and must never honor the remote inherited endpoint.
 mkdir -p "$t/runtime-docker"
 export LCTX_OWNER_RUNTIME_DIR="$t/runtime-docker"
-python3 -B -S - "$LCTX_OWNER_RUNTIME_DIR/docker.sock" <<'PYSOCK' &
-import socket,sys,time
-s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(1); time.sleep(120)
-PYSOCK
-docker_sock_pid=$!
-for _ in {1..50}; do [[ -S "$LCTX_OWNER_RUNTIME_DIR/docker.sock" ]] && break; sleep 0.02; done
 export DOCKER_HOST='tcp://203.0.113.99:2375' DOCKER_CONTEXT='remote-production'
 cat > "$fake/docker" <<'SH'
 #!/usr/bin/env bash
@@ -89,8 +83,15 @@ esac
 SH
 chmod +x "$fake/docker"
 export DOCKER_MOCK_LOG="$t/docker.log" DOCKER_HOST_LOG="$t/docker-host.log"
-PATH="$fake:$PATH" "$ROOT/collectors/containers/docker.sh" --run
-kill "$docker_sock_pid" 2>/dev/null || true; wait "$docker_sock_pid" 2>/dev/null || true
+(
+    export PATH="$fake:$PATH"
+    source "$ROOT/collectors/containers/docker.sh" --meta >/dev/null
+    # Endpoint discovery is injected at the filesystem predicate, while all
+    # production daemon commands, templates, parsing and pinning run unchanged.
+    # No network/socket creation or developer-host Docker daemon is needed.
+    _docker_is_local_socket() { [[ "$1" == "$LCTX_OWNER_RUNTIME_DIR/docker.sock" ]]; }
+    collector_main --run
+)
 PYTHONPATH="$ROOT/lib" python3 -B -S - "$STAGE/collector" "$DOCKER_MOCK_LOG" "$DOCKER_HOST_LOG" "$LCTX_OWNER_RUNTIME_DIR/docker.sock" <<'PY'
 from pathlib import Path
 import sys
@@ -153,7 +154,9 @@ case "$args" in
     printf '4 br-test inet 172.20.0.1/16 scope global br-test\n'
     ;;
   'route show default') printf 'default via 192.0.2.1 dev eth0\n' ;;
+  '-6 route show default') printf 'default via 2001:db8::1 dev eth0\n' ;;
   '-details route show table all') printf 'default via 192.0.2.1 dev eth0\n192.0.2.0/24 dev eth0 proto kernel scope link\n' ;;
+  '-6 -details route show table all') printf 'default via 2001:db8::1 dev eth0\n' ;;
   'rule show') printf '0: from all lookup local\n32766: from all lookup main\n' ;;
   *) ;;
 esac
@@ -162,6 +165,7 @@ cat > "$fake2/ss" <<'SH'
 #!/usr/bin/env bash
 if [[ "$*" == '-H -lntup' ]]; then
   printf 'tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=999999,fd=3))\n'
+  printf 'udp UNCONN 0 0 *:5353 *:*\n'
 elif [[ "$*" == '-s' ]]; then
   printf 'Total: 1\n'
 fi
@@ -171,7 +175,13 @@ cat > "$fake2/nft" <<'SH'
 exit 0
 SH
 chmod +x "$fake2"/*
+cat > "$fake2/iptables-save" <<'SH'
+#!/usr/bin/env bash
+printf '*filter\nCOMMIT\n'
+SH
+chmod +x "$fake2/iptables-save"
 PATH="$fake2:$PATH" "$ROOT/collectors/network/network.sh" --run
+[[ -f "$STAGE/evidence/iptables.txt" ]]
 PYTHONPATH="$ROOT/lib" python3 -B -S - "$STAGE/collector" <<'PY'
 from pathlib import Path
 import sys
@@ -183,7 +193,9 @@ facts=read_records(root/'facts.records','facts')
 ids={x['id'] for x in ents}
 assert 'netif:vethabc' not in ids,ids
 assert {'netif:lo','netif:eth0','netif:br-test'} <= ids
+assert 'socket:udp:*:5353' in ids and 'socket:udp:[::]:5353' not in ids
 assert any(x['key']=='network.ephemeral_veth_count' and x['value']==1 for x in facts),facts
+assert any(x['key']=='network.default_route_ipv6' and '2001:db8::1' in x['value'] for x in facts),facts
 by={(x['id'],x['key']):x['value'] for x in attrs}
 assert by[('netif:eth0','mtu')]==1500
 assert by[('netif:eth0','state')]=='UP'
@@ -244,7 +256,8 @@ from recordio import read_records
 facts=read_records(Path(sys.argv[1]),'facts')
 by={x['key']:x['value'] for x in facts}
 assert by['workstation.bluetooth.client_present'] is True,by
-assert by['workstation.bluetooth.controller_count']==0,by
+assert 'workstation.bluetooth.controller_count' not in by,by
+assert not (Path(sys.argv[1]).parent/'probes.records').read_bytes()
 PYBT
 
 printf 'Debian/cross-distro regression tests: ok\n'

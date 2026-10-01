@@ -8,16 +8,24 @@ COLLECTOR_BASELINE=0
 COLLECTOR_DESCRIPTION='Network manager and current radio/link state without credentials, stable radio identifiers, saved-profile names, or active scans.'
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd)/collector_api.sh"
 
-collector_detect() { command_exists nmcli || command_exists iw || { command_exists networkctl && LC_ALL=C networkctl list --no-pager >/dev/null 2>&1; }; }
+collector_detect() { command_exists nmcli || command_exists iw || { command_exists networkctl && bounded_command networkctl list --no-pager >/dev/null 2>&1; }; }
 
 collector_collect() {
-    local value focused=0
+    local value focused=0 nm_running=0
     { target_requested wifi || target_requested network; } && focused=1
 
     if command_exists nmcli; then
-        emit_fact network.manager NetworkManager nmcli
-        value=$(LC_ALL=C nmcli -t -f RUNNING general 2>/dev/null || true)
-        [[ -n "$value" ]] && emit_fact network.manager.running "$value" 'nmcli general'
+        emit_fact network.manager.nmcli_present true 'command -v nmcli' observed 1.0 boolean
+        value=$(bounded_command nmcli -t -f RUNNING general 2>/dev/null || true)
+        if [[ "$value" == running ]]; then nm_running=1; fi
+        case "$value" in
+            running|'not running') emit_fact network.manager.NetworkManager.running "$((nm_running))" 'nmcli general' observed 1.0 boolean ;;
+            *) record_collector_note 'NetworkManager runtime state could not be queried.' ;;
+        esac
+    fi
+    if (( nm_running )); then
+        emit_fact network.manager NetworkManager 'nmcli general (running)'
+        emit_fact network.manager.running running 'nmcli general'
         run_capture nm_general "$LCTX_COMMAND_TIMEOUT" 131072 --priority 80 -- nmcli -f STATE,CONNECTIVITY,WIFI-HW,WIFI,WWAN-HW,WWAN general status || true
         # CONNECTION names are user-chosen privacy data and not needed to model
         # device state. UUIDs and secrets are never requested.
@@ -34,11 +42,14 @@ collector_collect() {
             run_capture wifi_cache "$LCTX_COMMAND_TIMEOUT" 262144 --priority 35 -- \
                 nmcli -f IN-USE,MODE,CHAN,RATE,SIGNAL,SECURITY device wifi list --rescan no || true
         fi
-    elif command_exists networkctl && LC_ALL=C networkctl list --no-pager >/dev/null 2>&1; then
-        emit_fact network.manager systemd-networkd networkctl
+    fi
+    if command_exists networkctl && bounded_command networkctl list --no-pager >/dev/null 2>&1; then
         if command_exists systemctl; then
-            value=$(LC_ALL=C systemctl is-active systemd-networkd.service 2>/dev/null || true)
-            [[ -n "$value" ]] && emit_fact network.manager.running "$value" 'systemctl is-active systemd-networkd.service'
+            value=$(bounded_command systemctl is-active systemd-networkd.service 2>/dev/null || true)
+            if [[ "$value" == active ]]; then
+                emit_fact network.manager systemd-networkd 'systemctl is-active systemd-networkd.service'
+                emit_fact network.manager.systemd_networkd.running true 'systemctl is-active systemd-networkd.service' observed 1.0 boolean
+            fi
         fi
         run_capture networkctl_list "$LCTX_COMMAND_TIMEOUT" 262144 --priority 80 -- networkctl list --no-pager || true
         # status --all performs per-link queries and was >1.8s on the Debian

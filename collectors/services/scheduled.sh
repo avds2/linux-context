@@ -20,22 +20,13 @@ collector_collect() {
 
     # Cron command bodies are shell code and can contain positional credentials.
     # Inventory ownership/mode/time/path instead of reading arbitrary job contents.
-    run_shell_capture cron_inventory 10 524288 '
-        for p in /etc/crontab /etc/cron.d /etc/cron.hourly /etc/cron.daily /etc/cron.weekly /etc/cron.monthly /etc/anacrontab; do
-            [ -e "$p" ] || continue
-            if [ -f "$p" ]; then
-                stat -c "%A\t%U\t%G\t%s\t%y\t%n" -- "$p" 2>/dev/null || true
-            elif [ -d "$p" ]; then
-                find "$p" -maxdepth 1 -type f -printf "%M\t%u\t%g\t%s\t%TY-%Tm-%TdT%TH:%TM:%TS\t%p\n" 2>/dev/null | LC_ALL=C sort
-            fi
-        done' || true
+    run_capture cron_inventory 10 524288 --source 'cron file metadata (no contents)' -- \
+        python3 -B -S "$COLLECTOR_LIB_DIR/file_inventory.py" --max-items "$LCTX_MAX_ITEMS" \
+        /etc/crontab /etc/cron.d /etc/cron.hourly /etc/cron.daily /etc/cron.weekly /etc/cron.monthly /etc/anacrontab || true
 
     if (( EUID == 0 )); then
-        run_shell_capture user_crontab_inventory 10 262144 '
-            for d in /var/spool/cron /var/spool/cron/crontabs; do
-                [ -d "$d" ] || continue
-                find "$d" -maxdepth 1 -type f -printf "%M\t%u\t%g\t%s\t%TY-%Tm-%TdT%TH:%TM:%TS\t%p\n" 2>/dev/null | LC_ALL=C sort
-            done' || true
+        run_capture user_crontab_inventory 10 262144 --source 'user cron file metadata (no contents)' -- \
+            python3 -B -S "$COLLECTOR_LIB_DIR/file_inventory.py" --max-items "$LCTX_MAX_ITEMS" /var/spool/cron /var/spool/cron/crontabs || true
     fi
 
     command_exists atq && run_capture at_queue 10 262144 -- atq || true

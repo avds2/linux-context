@@ -30,3 +30,30 @@ jobs:
           timeout --version | head -n1
       - name: Run syntax checks and regression suite
         run: make check
+
+  distributions:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['debian:12-slim', 'fedora:43', 'archlinux:base', 'alpine:3.22']
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Exercise GNU and BusyBox userlands
+        env:
+          DISTRO_IMAGE: ${{ matrix.image }}
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work --entrypoint /bin/sh "$DISTRO_IMAGE" -ec '
+            if command -v apk >/dev/null; then
+              apk add --no-cache bash python3 make tar gzip
+            elif command -v apt-get >/dev/null; then
+              apt-get update && apt-get install -y bash python3 make tar gzip findutils coreutils procps util-linux
+            elif command -v dnf >/dev/null; then
+              dnf install -y bash python3 make tar gzip findutils coreutils procps-ng util-linux shadow-utils
+            elif command -v pacman >/dev/null; then
+              pacman -Syu --noconfirm --needed bash python make tar gzip findutils coreutils procps-ng util-linux
+            fi
+            make check
+            bash tests/smoke-distribution.sh
+          '

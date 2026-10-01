@@ -7,7 +7,7 @@ Contributions are welcome when they preserve the project's core contract: **maxi
 - Linux
 - Bash 4+
 - Python 3.9+
-- GNU/coreutils `timeout`
+- Common Linux utilities (GNU/coreutils timeout is optional; Python fallback exists)
 - `tar` for archive integration tests
 - Standard Linux utilities used by individual collectors are optional and feature-detected
 
@@ -68,3 +68,9 @@ See [`docs/FORMAT.md`](docs/FORMAT.md). New high-cardinality object state belong
 ## Compatibility
 
 Avoid distro-specific assumptions in the core. Feature-detect optional tools. A missing command/subsystem should normally make a collector `unavailable` or a probe absent—not make the whole run fail. Do not hide actual structural/programming errors behind `|| true` when they invalidate canonical data.
+
+Run `tests/smoke-distribution.sh` for all-profile archive/manifest/AI/privacy
+checks. CI runs `make check` and this smoke test in Debian, Fedora, Arch and
+Alpine containers; keep Alpine's BusyBox tools in place to exercise the minimal
+userland path. Ownership fixtures use sudo handoff when the environment can map
+the test UID; otherwise they explicitly report current-user-only coverage.

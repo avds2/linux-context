@@ -10,11 +10,13 @@ init_redaction
 parent=$(mktemp -d); trap 'rm -rf "$parent"' EXIT
 requested="$parent/out"
 
-if (( EUID == 0 )) && getent passwd 65534 >/dev/null 2>&1; then
+if (( EUID == 0 )) && getent passwd 65534 >/dev/null 2>&1 && \
+    chown "65534:$(getent passwd 65534 | awk -F: 'NR==1{print $4}')" "$parent" 2>/dev/null; then
     export SUDO_UID=65534 SUDO_GID=65534
     expected_uid=65534 expected_gid=65534
     chown "$expected_uid:$expected_gid" "$parent"
 else
+    printf 'sudo handoff fixture unavailable; checking current-user ownership\n' >&2
     expected_uid=$(id -u); expected_gid=$(id -g)
 fi
 LCTX_OUTPUT_DIR="$requested"

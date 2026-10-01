@@ -8,6 +8,17 @@ COLLECTOR_BASELINE=0
 COLLECTOR_DESCRIPTION='Installed package inventory and concise configured repository state.'
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd)/collector_api.sh"
 
+_package_count_from_capture() {
+    local label="$1" key="$2" source="$3" count
+    if (( LCTX_CAPTURE_TRUNCATED )); then
+        emit_fact "${key}_limited" true "$source" observed 1.0 boolean
+        record_collector_note "truncated:$label (exact package count unavailable)"
+        return 0
+    fi
+    count=$(awk 'NF {n++} END {print n+0}' "$LCTX_SECTION_DIR/$label.txt")
+    emit_fact "$key" "$count" "$source" observed 1.0 number
+}
+
 collector_collect() {
     local count
     if command_exists dpkg-query; then
@@ -17,9 +28,14 @@ collector_collect() {
         else
             emit_fact packages.manager dpkg dpkg-query
         fi
-        count=$(dpkg-query -W -f='${binary:Package}\n' 2>/dev/null | wc -l | tr -d ' ' || true)
-        [[ "$count" =~ ^[0-9]+$ ]] && emit_fact packages.installed_count "$count" dpkg-query observed 1.0 number
-        run_capture installed_packages 20 "$LCTX_COMMAND_MAX_BYTES" --priority 90 -- dpkg-query -W '-f=${binary:Package}\t${Version}\t${Architecture}\n' || true
+        # dpkg -W includes removed packages whose conffiles remain. Filter actual
+        # installed state and reuse the one bounded inventory for the count.
+        if run_capture installed_packages 20 "$LCTX_COMMAND_MAX_BYTES" --source 'dpkg-query installed packages' --priority 90 -- \
+            bash -o pipefail -c 'dpkg-query -W "$1" 2>/dev/null | awk -F "\t" "$2"' _ \
+            '-f=${db:Status-Status}\t${binary:Package}\t${Version}\t${Architecture}\n' \
+            '$1 == "installed" {print $2 "\t" $3 "\t" $4}'; then
+            _package_count_from_capture installed_packages packages.installed_count dpkg-query
+        fi
         command_exists apt-cache && run_capture apt_policy "$LCTX_COMMAND_TIMEOUT" 524288 --priority 65 -- apt-cache policy || true
         run_shell_capture apt_sources "$LCTX_COMMAND_TIMEOUT" 524288 'for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do [ -r "$f" ] || continue; echo "@@ $f"; sed -E "/^[[:space:]]*(#|$)/d" "$f"; done' || true
     elif command_exists rpm; then
@@ -33,9 +49,9 @@ collector_collect() {
             emit_fact packages.manager rpm rpm
         fi
         emit_fact packages.database rpm rpm
-        count=$(rpm -qa 2>/dev/null | wc -l | tr -d ' ' || true)
-        [[ "$count" =~ ^[0-9]+$ ]] && emit_fact packages.installed_count "$count" rpm observed 1.0 number
-        run_capture installed_packages 20 "$LCTX_COMMAND_MAX_BYTES" --priority 90 -- rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n' || true
+        if run_capture installed_packages 20 "$LCTX_COMMAND_MAX_BYTES" --priority 90 -- rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n'; then
+            _package_count_from_capture installed_packages packages.installed_count rpm
+        fi
         # Repository *source configuration* is passive and deterministic. Avoid
         # `dnf/yum repolist` here: depending on cache state/plugins those clients can
         # perform metadata/network work, violating the exporter's passive contract.
@@ -48,15 +64,16 @@ collector_collect() {
         ' || true
     elif command_exists pacman; then
         emit_fact packages.manager pacman pacman
-        count=$(pacman -Qq 2>/dev/null | wc -l | tr -d ' ' || true)
-        [[ "$count" =~ ^[0-9]+$ ]] && emit_fact packages.installed_count "$count" pacman observed 1.0 number
-        run_capture installed_packages 20 "$LCTX_COMMAND_MAX_BYTES" --priority 90 -- pacman -Q || true
+        if run_capture installed_packages 20 "$LCTX_COMMAND_MAX_BYTES" --priority 90 -- pacman -Q; then
+            _package_count_from_capture installed_packages packages.installed_count pacman
+        fi
         local kp kv ksafe
-        for kp in linux linux-lts linux-zen linux-hardened; do
-            kv=$(pacman -Q "$kp" 2>/dev/null | awk '{print $2}' || true); [[ -n "$kv" ]] || continue
+        while read -r kp kv _; do
+            case "$kp" in linux|linux-lts|linux-zen|linux-hardened) ;; *) continue;; esac
+            [[ -n "$kv" ]] || continue
             ksafe=$(safe_name "$kp"); emit_fact "packages.kernel.${ksafe}.installed_version" "$kv" "pacman -Q $kp"
             emit_entity "package:$kp" package "$kp" pacman; emit_relation host:local has_package "package:$kp" pacman
-        done
+        done < "$LCTX_SECTION_DIR/installed_packages.txt"
         run_shell_capture pacman_conf 5 131072 'sed -E "/^[[:space:]]*(#|$)/d" /etc/pacman.conf 2>/dev/null || true' || true
         run_shell_capture pacman_mirrorlist 5 131072 'sed -E "/^[[:space:]]*(#|$)/d" /etc/pacman.d/mirrorlist 2>/dev/null || true' || true
         if profile_at_least max; then
@@ -67,9 +84,9 @@ collector_collect() {
         fi
     elif command_exists apk; then
         emit_fact packages.manager apk apk
-        count=$(apk info 2>/dev/null | wc -l | tr -d ' ' || true)
-        [[ "$count" =~ ^[0-9]+$ ]] && emit_fact packages.installed_count "$count" apk observed 1.0 number
-        run_capture installed_packages 20 "$LCTX_COMMAND_MAX_BYTES" --priority 90 -- apk info -vv || true
+        if run_capture installed_packages 20 "$LCTX_COMMAND_MAX_BYTES" --priority 90 -- apk info -vv; then
+            _package_count_from_capture installed_packages packages.installed_count apk
+        fi
         capture_file_if_readable repositories /etc/apk/repositories 262144 70 || true
     else
         record_collector_note 'No supported package manager detected'
@@ -81,17 +98,20 @@ collector_collect() {
         # than the rest of package collection on workstations and adds little to a
         # generic machine model, so counts/inventories are package-target detail.
         if command_exists flatpak && target_requested packages; then
-            count=$(flatpak list --system --app --columns=application 2>/dev/null | awk 'NF {n++} END {print n+0}' || true)
-            [[ "$count" =~ ^[0-9]+$ ]] && emit_fact packages.flatpak.system_app_count "$count" 'flatpak list --system' observed 1.0 number
-            count=$(run_as_output_owner flatpak list --user --app --columns=application 2>/dev/null | awk 'NF {n++} END {print n+0}' || true)
-            [[ "$count" =~ ^[0-9]+$ ]] && emit_fact packages.flatpak.user_app_count "$count" 'flatpak list --user (owner)' observed 1.0 number
-            run_capture flatpak_system_apps 20 524288 --priority 60 -- flatpak list --system --app --columns=application,ref,version,branch,origin,installation || true
-            run_owner_capture flatpak_user_apps 20 524288 --priority 60 -- flatpak list --user --app --columns=application,ref,version,branch,origin,installation || true
+            if run_capture flatpak_system_apps 20 524288 --priority 60 -- flatpak list --system --app --columns=application,ref,version,branch,origin,installation; then
+                _package_count_from_capture flatpak_system_apps packages.flatpak.system_app_count 'flatpak list --system'
+            fi
+            if run_owner_capture flatpak_user_apps 20 524288 --priority 60 -- flatpak list --user --app --columns=application,ref,version,branch,origin,installation; then
+                _package_count_from_capture flatpak_user_apps packages.flatpak.user_app_count 'flatpak list --user (owner)'
+            fi
         fi
         if command_exists snap && target_requested packages; then
-            count=$(snap list 2>/dev/null | awk 'NR>1 && NF {n++} END {print n+0}' || true)
-            [[ "$count" =~ ^[0-9]+$ ]] && emit_fact packages.snap.package_count "$count" 'snap list' observed 1.0 number
-            run_capture snap_packages 20 524288 --priority 60 -- snap list || true
+            if run_capture snap_packages 20 524288 --priority 60 -- snap list; then
+                if (( ! LCTX_CAPTURE_TRUNCATED )); then
+                    count=$(awk 'NR>1 && NF {n++} END {print n+0}' "$LCTX_SECTION_DIR/snap_packages.txt")
+                    emit_fact packages.snap.package_count "$count" 'snap list' observed 1.0 number
+                fi
+            fi
         fi
     fi
 }

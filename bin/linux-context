@@ -90,11 +90,17 @@ while (( $# )); do
 done
 
 export LCTX_VERSION LCTX_PROFILE LCTX_TARGETS LCTX_OUTPUT_DIR
+case "$LCTX_PROFILE" in quick|standard|deep|max) ;; *) fatal "Unknown profile: $LCTX_PROFILE";; esac
+[[ -n "$LCTX_TARGETS" && "$LCTX_TARGETS" != ,* && "$LCTX_TARGETS" != *, && "$LCTX_TARGETS" != *,,* ]] || fatal 'empty target name'
+(( LCTX_ARCHIVE || LCTX_KEEP_DIR )) || fatal '--remove-dir-after-archive requires archive output'
 
 # Successful collection requires these dependencies for every profile. Keeping one
 # production security path is safer than silently degrading on lower profiles.
 command_exists python3 || fatal 'Python 3.9+ is required for typed compilation and redaction.'
-command_exists timeout || fatal 'GNU/coreutils timeout is required for bounded read-only probes.'
+lctx_python -c 'import sys; sys.exit(sys.version_info < (3, 9))' || fatal 'Python 3.9+ is required.'
+(( BASH_VERSINFO[0] >= 4 )) || fatal 'Bash 4.0+ is required.'
+if (( LCTX_ARCHIVE )); then command_exists tar || fatal 'tar is required for archive output.'; fi
+init_execution_backend
 
 load_profile "$LCTX_PROFILE"
 if [[ -n "$LCTX_JOBS_OVERRIDE" ]]; then LCTX_JOBS="$LCTX_JOBS_OVERRIDE"; fi
@@ -104,19 +110,27 @@ export LCTX_JOBS
 init_redaction
 [[ "$LCTX_REDACTION_ASSURANCE" == enhanced ]] || fatal 'Enhanced redaction assurance is mandatory.'
 
-mapfile -t collectors < <(find "$LCTX_PROJECT_ROOT/collectors" -type f -name '*.sh' -perm -u+x | LC_ALL=C sort)
+mapfile -t collectors < <(find "$LCTX_PROJECT_ROOT/collectors" -type f -name '*.sh' | LC_ALL=C sort)
+(( ${#collectors[@]} )) || fatal 'No executable collectors found.'
+# Metadata is immutable for a run. Read it once rather than starting every
+# collector repeatedly for target discovery, scheduling, and stage setup.
+collector_metadata=()
+for collector in "${collectors[@]}"; do
+    [[ -x "$collector" ]] || fatal "Collector is not executable: $collector"
+    meta=$(lctx_timeout 5 "$collector" --meta) || fatal "Unable to read collector metadata: $collector"
+    collector_metadata+=("$meta")
+done
 
 if (( LCTX_LIST_COLLECTORS )); then
     printf 'ID\tMIN_PROFILE\tTARGETS\tPRIVILEGE\tBASELINE\tDESCRIPTION\n'
-    for collector in "${collectors[@]}"; do "$collector" --meta; done
+    printf '%s\n' "${collector_metadata[@]}"
     exit 0
 fi
 
 supported_targets() {
     local collector meta id min targets privilege baseline description token
     printf '%s\n' auto all
-    for collector in "${collectors[@]}"; do
-        meta=$("$collector" --meta) || continue
+    for meta in "${collector_metadata[@]}"; do
         IFS=$'\t' read -r id min targets privilege baseline description <<< "$meta"
         for token in $targets; do printf '%s\n' "$token"; done
     done | LC_ALL=C sort -u
@@ -164,6 +178,7 @@ on_exit() {
 trap on_exit EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+lctx_python "$LCTX_PROJECT_ROOT/lib/catalog.py" "$LCTX_STAGE_ROOT" "${collector_metadata[@]}" || fatal 'Invalid collector catalog'
 
 matches_target() {
     local collector_targets="$1" baseline="$2" token ctoken
@@ -179,33 +194,11 @@ matches_target() {
     return 1
 }
 
-prepare_collector_stage() {
-    local __dest="$1" id="$2" safe __stage
-    safe_name_into safe "$id"
-    __stage="$LCTX_STAGE_ROOT/collectors/$safe"
-    mkdir -p "$__stage" "$LCTX_STAGE_ROOT/evidence/$safe"
-    : > "$__stage/facts.records"
-    : > "$__stage/entities.records"
-    : > "$__stage/entity-attrs.records"
-    : > "$__stage/relations.records"
-    : > "$__stage/artifacts.records"
-    : > "$__stage/probes.records"
-    : > "$__stage/notes.tsv"
-    printf -v "$__dest" '%s' "$__stage"
-}
-
 run_collector() {
-    local collector="$1" meta id min_profile targets privilege baseline description safe stage start_ms end_ms duration rc status detail
-    meta=$("$collector" --meta 2>/dev/null) || return 0
+    local collector="$1" meta="$2" id min_profile targets privilege baseline description safe stage start_ms end_ms duration rc phase detected status detail
     IFS=$'\t' read -r id min_profile targets privilege baseline description <<< "$meta"
     safe_name_into safe "$id"
-    prepare_collector_stage stage "$id"
-    lctx_python - "$stage/collector.json" "$id" "$min_profile" "$targets" "$privilege" "$baseline" "$description" <<'PY' 2>/dev/null || true
-import json,sys
-p,*v=sys.argv[1:]
-with open(p, "w", encoding="utf-8") as fh:
-    json.dump(dict(zip(["id","min_profile","targets","privilege","baseline","description"],v)), fh, separators=(",",":"), allow_nan=False)
-PY
+    stage="$LCTX_STAGE_ROOT/collectors/$safe"
     epoch_millis_into start_ms
     status='collected'; detail="$description"
 
@@ -216,24 +209,29 @@ PY
     elif [[ "$privilege" == root && "$EUID" -ne 0 ]]; then
         status='unavailable'; detail='requires root'
     else
-        set +e; "$collector" --detect >/dev/null 2>&1; rc=$?; set -e
-        if (( rc != 0 )); then
+        log INFO "inspecting $id"
+        set +e
+        LCTX_SECTION_DIR="$LCTX_STAGE_ROOT/evidence/$safe" \
+        LCTX_FACTS_RECORDS="$stage/facts.records" \
+        LCTX_ENTITIES_RECORDS="$stage/entities.records" \
+        LCTX_ENTITY_ATTRS_RECORDS="$stage/entity-attrs.records" \
+        LCTX_RELATIONS_RECORDS="$stage/relations.records" \
+        LCTX_ARTIFACTS_RECORDS="$stage/artifacts.records" \
+        LCTX_PROBES_RECORDS="$stage/probes.records" \
+        LCTX_NOTES_FILE="$stage/notes.tsv" \
+        lctx_python "$LCTX_PROJECT_ROOT/lib/timeout.py" --collector "$collector" "$((LCTX_COMMAND_TIMEOUT * 12))" "$stage/detect-status"
+        rc=$?
+        set -e
+        [[ -r "$stage/detect-status" ]] || fatal "Supervisor did not report detection: $id"
+        read -r phase detected < "$stage/detect-status"
+        [[ "$detected" =~ ^[0-9]+$ ]] || fatal "Invalid supervisor detection status: $id"
+        if [[ "$phase" == detect ]]; then
             status='unavailable'; detail='not detected or not accessible'
-        else
-            log INFO "collecting $id"
-            set +e
-            LCTX_SECTION_DIR="$LCTX_STAGE_ROOT/evidence/$safe" \
-            LCTX_FACTS_RECORDS="$stage/facts.records" \
-            LCTX_ENTITIES_RECORDS="$stage/entities.records" \
-            LCTX_ENTITY_ATTRS_RECORDS="$stage/entity-attrs.records" \
-            LCTX_RELATIONS_RECORDS="$stage/relations.records" \
-            LCTX_ARTIFACTS_RECORDS="$stage/artifacts.records" \
-            LCTX_PROBES_RECORDS="$stage/probes.records" \
-            LCTX_NOTES_FILE="$stage/notes.tsv" \
-            "$collector" --run
-            rc=$?
-            set -e
+            (( detected == 124 || detected == 137 )) && detail='detection timed out'
+        elif [[ "$phase" == run && "$detected" == "$rc" ]]; then
             if (( rc != 0 )); then status='partial'; detail="collector exit $rc"; fi
+        else
+            fatal "Invalid supervisor completion status: $id"
         fi
     fi
     epoch_millis_into end_ms; duration=$((end_ms-start_ms))
@@ -246,8 +244,8 @@ PY
 # run concurrently. Prefer a rolling worker window when Bash supports wait -n.
 if help wait 2>/dev/null | grep -q -- '-n'; then
     active_jobs=0
-    for collector in "${collectors[@]}"; do
-        run_collector "$collector" &
+    for index in "${!collectors[@]}"; do
+        run_collector "${collectors[$index]}" "${collector_metadata[$index]}" &
         active_jobs=$((active_jobs+1))
         if (( active_jobs >= LCTX_JOBS )); then
             wait -n || true
@@ -257,8 +255,8 @@ if help wait 2>/dev/null | grep -q -- '-n'; then
     while (( active_jobs > 0 )); do wait -n || true; active_jobs=$((active_jobs-1)); done
 else
     pids=()
-    for collector in "${collectors[@]}"; do
-        run_collector "$collector" & pids+=("$!")
+    for index in "${!collectors[@]}"; do
+        run_collector "${collectors[$index]}" "${collector_metadata[$index]}" & pids+=("$!")
         if (( ${#pids[@]} >= LCTX_JOBS )); then
             for pid in "${pids[@]}"; do wait "$pid" || true; done
             pids=()
@@ -274,24 +272,9 @@ secure_staging || fatal 'private staging redaction/residual scan failed; no raw 
 install_sanitized_stage
 log INFO 'compiling compact canonical AI context'
 compile_context || fatal "canonical context compilation/validation failed: $LCTX_OUTPUT_DIR/meta/validation.json"
-# Defense in depth: sanitize compiler-generated JSON/metadata too, then rescan.
-sanitize_bundle_text_in_place || fatal 'final bundle redaction pass failed'
-# Derive a lossless AI view from sanitized canonical data, before the final
-# residual scan and manifest. It receives the same privacy/publication contract.
-lctx_python "$LCTX_PROJECT_ROOT/lib/ai_view.py" encode \
-    "$LCTX_OUTPUT_DIR/context.json" "$LCTX_OUTPUT_DIR/context.ai.json" \
-    || fatal 'lossless AI view generation failed'
-final_scan || fatal "residual secret-risk scan failed: $LCTX_OUTPUT_DIR/meta/redaction.json"
-# Redaction rewrites first-party JSON structurally, so validate once more afterward.
-compile_validation_only() {
-    lctx_python - "$LCTX_OUTPUT_DIR/context.json" "$LCTX_OUTPUT_DIR/meta/validation.json" <<'PY'
-import json,sys
-for p in sys.argv[1:]:
-    with open(p, encoding="utf-8") as fh: json.load(fh)
-PY
-}
-compile_validation_only || fatal 'post-redaction JSON integrity check failed'
-write_manifest
+# Share one interpreter/compiled redaction engine across all final gates.
+log INFO 'finalizing redaction, integrity, lossless AI view and manifest'
+lctx_python "$LCTX_PROJECT_ROOT/lib/finalize.py" "$LCTX_OUTPUT_DIR" || fatal 'final bundle redaction/integrity/AI/privacy gate failed'
 publish_bundle
 
 archive_path=''

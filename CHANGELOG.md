@@ -3,9 +3,31 @@
 
 ## Unreleased
 
+- Add lossless AI encoding v2: endpoint references, label/provenance defaults and
+  pooled observations; select the smallest of canonical/v1/v2 encodings and keep
+  backward-compatible decoding. The supplied rich sample shrinks from 114,586
+  canonical bytes (96,592 old AI bytes) to 74,134 bytes without dropping data.
+- Cache collector metadata and initialize stages/hash manifests in single Python
+  passes; batch selected sysctls, reuse package inventories for counts, and share
+  one interpreter across the final redaction/validation/AI/scan/manifest gates.
+- Use sysfs adapters for automatic Bluetooth discovery; reserve bounded BlueZ
+  controller queries for explicit targets (three-second discovery limit).
+- Add Python timeout and owner-handoff fallbacks for minimal/BusyBox userlands;
+  bound detection, collector execution and previously unbounded daemon calls.
+- Read vendor os-release fallback safely, expose PID 1, gate systemd runtime,
+  suppress container reboot guesses, and distinguish installed network clients
+  from running managers and failed LSM queries from disabled protection.
+- Filter residual Debian package records; avoid false zero/exact counts on
+  failed or truncated inventories; support portable filesystem/process/boot/cron
+  observations and preserve IPv6 routes and coexisting firewall state.
+- Observe procfs truncation by actual captured bytes; retain caller shell flags;
+  reject missing worker status/invalid catalog/empty targets and reconcile final
+  redacted evidence/context byte budgets before publication.
+- Add package-family, runtime/fallback, model/privacy, manager-state, final-budget
+  and randomized AI round-trip regressions plus four-distribution container CI.
 - Accept IEC capacity units (GiB/MiB and related sizes) from newer dmidecode
   output, restoring module/installed capacity and memory-array limits.
-- Bound Bluetooth controller discovery to five seconds with probe telemetry;
+- Bound Bluetooth controller discovery with probe telemetry;
   failed/truncated discovery leaves the controller count unknown instead of zero.
 - Stop and reap collector process trees before private staging cleanup on INT/TERM
   or early failure, including producers in GNU timeout's separate process groups.

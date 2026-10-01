@@ -74,7 +74,7 @@ Every host-derived string is untrusted data. A consuming AI/agent must not execu
 ## Lossless AI view
 
 `context.ai.json` contains the same document with an additional `encoding` block
-(`name=linux-context-ai`, `version=1`). Its dictionaries apply only to:
+(`name=linux-context-ai`, `version=1` or `2`). Both versions use these dictionaries:
 
 - Entity type (column 1): integer index into `entity_types`.
 - Entity attributes (column 3): list of `[attribute_key_index, original_value]`
@@ -91,6 +91,24 @@ All other fields preserve canonical v5 semantics. Remove `encoding` and undo
 these substitutions to recover the exact canonical JSON document; a round-trip
 check is mandatory during export. With graph deferral, the AI view retains the
 same graph sidecar route and does not duplicate or compact the sidecar.
+
+Version 2 adds these lossless substitutions:
+
+- Relation endpoints that are integers refer to entity **row indexes**. String
+  endpoints retain their literal canonical IDs. Entity row order is preserved.
+- Entity label `null` means the entity ID; label `0` means the ID's suffix after
+  its first colon. Other labels remain literal strings.
+- Entity provenance `null` uses `type_provenance[str(type_index)]`. An explicit
+  empty provenance list remains empty.
+- Integer entity attribute values refer to `observations`; list values remain
+  literal canonical observation pairs/conflict lists. Type attribute defaults
+  retain literal values. Expand observations before merging defaults/overrides.
+
+The exporter compares v1, v2 and canonical sizes and selects the smallest view.
+The decoder continues to support older v1 bundles and rejects invalid/negative
+dictionary references. No canonical fact, conflict, provenance, missing value or
+evidence route is dropped. Byte savings do not imply identical token savings
+for every model tokenizer.
 
 The AI view is generated from sanitized canonical data and is included in the
 final residual scan, private publication, archive and SHA-256 manifest. It is an

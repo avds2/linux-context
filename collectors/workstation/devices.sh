@@ -49,13 +49,24 @@ collector_collect() {
         fi
     fi
 
+    # Automatic discovery uses the kernel's registered adapters: no daemon/bus
+    # round-trip, no controller names, and no five-second BlueZ startup wait.
+    if [[ -d /sys/class/bluetooth && -r /sys/class/bluetooth ]]; then
+        local adapter adapter_count=0
+        for adapter in /sys/class/bluetooth/hci*; do
+            [[ -e "$adapter" && "${adapter##*/}" =~ ^hci[0-9]+$ ]] && adapter_count=$((adapter_count+1))
+        done
+        emit_fact workstation.bluetooth.adapter_count "$adapter_count" /sys/class/bluetooth observed 1.0 number
+    fi
     if command_exists bluetoothctl; then
-        local bt_list line bt_count=0
         emit_fact workstation.bluetooth.client_present true 'command -v bluetoothctl' observed 1.0 boolean
+    fi
+    if (( bluetooth_focused )) && command_exists bluetoothctl; then
+        local bt_list line bt_count=0
         # BlueZ can wait indefinitely when the daemon/bus is unavailable. A
         # failed probe means unknown, not zero controllers; never parse partial
         # output or persist personal controller names from this discovery step.
-        if probe_capture bluetooth_list 5 262144 -- bluetoothctl list; then
+        if probe_capture bluetooth_list 3 262144 -- bluetoothctl list; then
             if (( ! LCTX_CAPTURE_TRUNCATED )); then
                 bt_list=$(<"$LCTX_PROBE_FILE")
                 while IFS= read -r line; do

@@ -95,6 +95,32 @@ lctx_python() {
     PYTHONDONTWRITEBYTECODE=1 python3 -B -S "$@"
 }
 
+init_execution_backend() {
+    # BusyBox timeout does not accept GNU long options. Probe once in the
+    # launcher and inherit the result in workers; standalone collectors can
+    # initialize lazily. Python is already required, so bounds never disappear.
+    if command_exists timeout && [[ "$(timeout --version 2>/dev/null)" == *'GNU coreutils'* ]]; then
+        LCTX_TIMEOUT_BACKEND=gnu
+    else
+        LCTX_TIMEOUT_BACKEND=python
+    fi
+    export LCTX_TIMEOUT_BACKEND
+}
+
+lctx_timeout() {
+    local seconds="$1"; shift
+    [[ -n "${LCTX_TIMEOUT_BACKEND:-}" ]] || init_execution_backend
+    if [[ "$LCTX_TIMEOUT_BACKEND" == gnu ]]; then
+        timeout --signal=TERM --kill-after=2s "${seconds}s" "$@"
+    else
+        lctx_python "${BASH_SOURCE[0]%/*}/timeout.py" "$seconds" "$@"
+    fi
+}
+
+bounded_command() {
+    LC_ALL=C LANG=C TZ=UTC TERM=dumb lctx_timeout "${LCTX_COMMAND_TIMEOUT:-5}" "$@" </dev/null
+}
+
 normalize_one_line_into() {
     local __dest="$1" __s="${2:-}"
     local -a __words=()
@@ -238,13 +264,13 @@ run_as_output_owner() {
             envv+=("XDG_RUNTIME_DIR=$runtime" "DBUS_SESSION_BUS_ADDRESS=unix:path=$runtime/bus")
         fi
         if command_exists runuser && [[ -n "$name" ]]; then
-            runuser -u "$name" -- "${envv[@]}" "$@"
+            bounded_command runuser -u "$name" -- "${envv[@]}" "$@"
         elif command_exists setpriv; then
-            setpriv --reuid "$LCTX_OWNER_UID" --regid "$LCTX_OWNER_GID" --init-groups "${envv[@]}" "$@"
+            bounded_command setpriv --reuid "$LCTX_OWNER_UID" --regid "$LCTX_OWNER_GID" --init-groups "${envv[@]}" "$@"
         else
-            return 69
+            bounded_command python3 -B -S "${BASH_SOURCE[0]%/*}/as_owner.py" "$LCTX_OWNER_UID" "$LCTX_OWNER_GID" "${envv[@]}" "$@"
         fi
     else
-        "$@"
+        bounded_command "$@"
     fi
 }

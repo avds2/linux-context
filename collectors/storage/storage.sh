@@ -14,12 +14,16 @@ collector_collect() {
         value=$(LC_ALL=C findmnt -n -o SOURCE / 2>/dev/null || true); [[ -n "$value" ]] && emit_fact storage.root.source "$value" 'findmnt /'
         value=$(LC_ALL=C findmnt -n -o FSTYPE / 2>/dev/null || true); [[ -n "$value" ]] && emit_fact storage.root.fstype "$value" 'findmnt /'
     fi
-    if command_exists df; then
-        value=$(LC_ALL=C df -B1 --output=size / 2>/dev/null | tail -n1 | tr -d ' ' || true)
-        [[ "$value" =~ ^[0-9]+$ ]] && emit_fact storage.root.size_bytes "$value" 'df -B1 /' observed 1.0 number
-        value=$(LC_ALL=C df -B1 --output=used / 2>/dev/null | tail -n1 | tr -d ' ' || true)
-        [[ "$value" =~ ^[0-9]+$ ]] && emit_fact storage.root.used_bytes "$value" 'df -B1 /' observed 1.0 number
+    # statvfs works with GNU and BusyBox userlands and gets all fields in one
+    # syscall instead of spawning two incompatible GNU df --output commands.
+    if probe_capture root_usage 3 4096 -- python3 -B -S -c 'import os; s=os.statvfs("/"); print(s.f_blocks*s.f_frsize, (s.f_blocks-s.f_bfree)*s.f_frsize, s.f_bavail*s.f_frsize)'; then
+        local size used available
+        read -r size used available < "$LCTX_PROBE_FILE"
+        [[ "$size" =~ ^[0-9]+$ ]] && emit_fact storage.root.size_bytes "$size" 'statvfs /' observed 1.0 number
+        [[ "$used" =~ ^[0-9]+$ ]] && emit_fact storage.root.used_bytes "$used" 'statvfs /' observed 1.0 number
+        [[ "$available" =~ ^[0-9]+$ ]] && emit_fact storage.root.available_bytes "$available" 'statvfs /' observed 1.0 number
     fi
+    release_probe
 
     command_exists df && run_capture filesystems "$LCTX_COMMAND_TIMEOUT" "$LCTX_COMMAND_MAX_BYTES" -- df -hT || true
     command_exists df && run_capture inodes "$LCTX_COMMAND_TIMEOUT" "$LCTX_COMMAND_MAX_BYTES" -- df -hi || true

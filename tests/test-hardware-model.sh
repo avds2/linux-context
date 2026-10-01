@@ -61,6 +61,13 @@ assert any(r['from']=='memory-array:0' and r['to']=='memory-device:0' for r in m
 assert size_bytes('Unknown') is None
 assert size_bytes('512 MB') == 512*1024**2
 assert size_bytes('2 TB') == 2*1024**4
+# New dmidecode output uses IEC units for installed modules and array limits.
+for unit, power in zip(('KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB'), range(1, 7)):
+    assert size_bytes('2 ' + unit) == 2 * 1024**power
+iec = memory_model(text.replace(' GB', ' GiB'), 'no_records')
+assert facts(iec) == f
+assert attrs(iec) == a
+assert size_bytes('8 Gibberish') is None
 # Missing firmware values remain unavailable, not a guessed DDR generation.
 m = memory_model(text.replace('DDR4','Unknown').replace('Size: 8 GB','Size: Unknown'), 'no_records')
 assert facts(m)['hardware.memory.module_inventory_status'] == 'partial'

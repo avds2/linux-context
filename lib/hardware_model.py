@@ -50,8 +50,10 @@ class Model:
 
 
 def size_bytes(text):
-    m = re.fullmatch(r'(\d+)\s*(kB|MB|GB|TB|PB|EB)', text)
-    return int(m[1]) * 1024 ** (('kB', 'MB', 'GB', 'TB', 'PB', 'EB').index(m[2]) + 1) if m else None
+    # dmidecode reports binary capacities with legacy GB/MB spellings or
+    # explicit GiB/MiB units, depending on its version. Both mean powers of 1024.
+    m = re.fullmatch(r'(\d+)\s*(kB|[KMGTPE]i?B)', text)
+    return int(m[1]) * 1024 ** ('KMGTPE'.index(m[2][0].upper()) + 1) if m else None
 
 
 def memory_model(text, status):

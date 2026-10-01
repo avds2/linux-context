@@ -3,6 +3,8 @@
 
 ## Unreleased
 
+- Accept IEC capacity units (GiB/MiB and related sizes) from newer dmidecode
+  output, restoring module/installed capacity and memory-array limits.
 - Bound Bluetooth controller discovery to five seconds with probe telemetry;
   failed/truncated discovery leaves the controller count unknown instead of zero.
 - Stop and reap collector process trees before private staging cleanup on INT/TERM

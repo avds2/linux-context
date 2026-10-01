@@ -191,10 +191,11 @@ def snapshot(cpu_file, pci_file='', block_file='', root=Path('/sys'), proc=Path(
         if match:
             out['memory'][match[1]] = int(match[2]) * 1024
     dmi = root / 'class/dmi/id'
-    for key in ('sys_vendor', 'product_name', 'product_version', 'board_vendor', 'board_name', 'bios_vendor', 'bios_version', 'bios_date'):
+    for key in ('sys_vendor', 'product_name', 'product_version', 'board_vendor', 'board_name', 'board_version', 'bios_vendor', 'bios_version', 'bios_date'):
         value = read_field(dmi / key)
         if useful(value):
             out['firmware'][key] = value
+    out['microcode_version'] = read_field(root / 'devices/system/cpu/cpu0/microcode/version')
     for card in sorted((root / 'class/drm').glob('card*'))[:128]:
         if not re.fullmatch(r'card\d+', card.name):
             continue
@@ -241,11 +242,14 @@ def platform_model(data):
                   'L2 cache': ('l2_cache', False), 'L3 cache': ('l3_cache', False),
                   'Flags': ('instruction_features', False)}
     cpu = {}
+    vulnerabilities = {}
     def visit(rows):
         for row in rows:
             if not isinstance(row, dict):
                 continue
             key = str(row.get('field', '')).rstrip(':')
+            if key.startswith('Vulnerability ') and useful(row.get('data')):
+                vulnerabilities[key.removeprefix('Vulnerability ')] = str(row['data'])
             if key in cpu_fields and useful(row.get('data')):
                 cpu[key] = row['data']
             if isinstance(row.get('children'), list):
@@ -261,6 +265,15 @@ def platform_model(data):
             if numeric:
                 value = int(value) if str(value).isdigit() else None
             model.attr('cpu:local', key, value, source)
+    if useful(data.get('microcode_version')):
+        model.fact('hardware.cpu.microcode_version', data['microcode_version'], '/sys/devices/system/cpu/cpu0/microcode/version')
+    if cpu and vulnerabilities:
+        unaffected = sorted(k for k,v in vulnerabilities.items() if v == 'Not affected')
+        if unaffected:
+            model.attr('cpu:local', 'vulnerabilities_not_affected', ','.join(unaffected), 'lscpu --json')
+        for key,value in vulnerabilities.items():
+            if value != 'Not affected':
+                model.attr('cpu:local', 'vulnerability.' + key, value, 'lscpu --json')
     for key, value in data.get('firmware', {}).items():
         model.fact('hardware.firmware.' + key, value, '/sys/class/dmi/id')
     for gpu in data.get('gpus', []):

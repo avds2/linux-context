@@ -55,7 +55,7 @@ maximum capacity are firmware claims and may not indicate user-upgradeable slots
 DDR generation is inferred from slot names, capacity or speed alone.
 
 `hardware.platform` adds bounded typed CPU topology/cache/selected instruction
-features, safe motherboard/BIOS identity, GPU PCI model/driver and available VRAM,
+features, microcode and CPU vulnerability/mitigation reports, safe motherboard/BIOS identity, GPU PCI model/driver and available VRAM,
 disks (model, transport, capacity, rotational/removable/read-only flags),
 and system power supplies. Battery full capacity as a percentage of design
 capacity is derived only from matching energy or charge counters, with a nonzero

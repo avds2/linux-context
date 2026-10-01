@@ -92,10 +92,16 @@ field(sysroot/'class/dmi/id','product_serial','PRIVATE-SERIAL')
 cpu=root/'cpu.json'; cpu.write_text('{"lscpu":[{"field":"CPU(s):","data":"8"},{"field":"Topology:","children":[{"field":"Socket(s):","data":"1"},{"field":"Thread(s) per core:","data":"2"}]}]}')
 pci=root/'pci.txt'; pci.write_text('0000:01:00.0 "VGA compatible controller [0300]" "AMD [1002]" "Radeon Test [73bf]"\n')
 block=root/'block.json'; block.write_text('{"blockdevices":[{"kname":"nvme0n1","type":"disk","size":1000000000000,"rota":false,"ro":false,"rm":false,"tran":"nvme","model":"Test SSD"},{"kname":"nvme0n1","type":"disk"}]}')
+field(sysroot/'devices/system/cpu/cpu0/microcode', 'version', '0x1234')
 data=snapshot(str(cpu),str(pci),str(block),root=sysroot,proc=proc)
 assert 'PRIVATE' not in str(data) and 'DO-NOT-COLLECT' not in str(data)
 assert len(data['power'])==1
+data['cpu'].extend([{'field':'Vulnerability Spectre v2:','data':'Mitigation: Retpolines'},
+                    {'field':'Vulnerability Meltdown:','data':'Not affected'}])
 m=platform_model(data); a=attrs(m)
+assert facts(m)['hardware.cpu.microcode_version']=='0x1234'
+assert a['cpu:local','vulnerability.Spectre v2']=='Mitigation: Retpolines'
+assert a['cpu:local','vulnerabilities_not_affected']=='Meltdown'
 assert a['cpu:local','logical_count']==8
 assert a['cpu:local','threads_per_core']==2
 assert a['gpu:card0','driver']=='amdgpu'

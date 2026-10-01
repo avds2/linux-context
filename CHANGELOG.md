@@ -3,6 +3,11 @@
 
 ## Unreleased
 
+- Bound Bluetooth controller discovery to five seconds with probe telemetry;
+  failed/truncated discovery leaves the controller count unknown instead of zero.
+- Stop and reap collector process trees before private staging cleanup on INT/TERM
+  or early failure, including producers in GNU timeout's separate process groups.
+- Add hanging/failed/empty/successful Bluetooth and INT/TERM cleanup regressions.
 - Add standard-profile typed SMBIOS RAM arrays/modules with capacity, DDR type,
   manufacturer/part number, slot/bank, rank, ECC, rated/configured speeds and
   explicit missing-tool/access/firmware/truncation coverage. Keep serial/asset

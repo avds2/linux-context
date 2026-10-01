@@ -146,6 +146,18 @@ init_bundle
 on_exit() {
     local rc=$?
     trap - EXIT
+    trap '' INT TERM
+    # Background shells can ignore terminal SIGINT and continue writing into
+    # staging. Stop and reap their full trees before removing private material.
+    local -a workers=()
+    mapfile -t workers < <(jobs -pr)
+    if (( ${#workers[@]} )); then
+        if ! lctx_python "$LCTX_PROJECT_ROOT/lib/stop_workers.py" "${workers[@]}"; then
+            log ERROR "Unable to stop collectors; private staging retained at $LCTX_TMP_DIR"
+            exit "$rc"
+        fi
+        wait || true
+    fi
     cleanup_tmp || true
     exit "$rc"
 }

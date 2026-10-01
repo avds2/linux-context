@@ -1,5 +1,28 @@
 # Changelog
 
+
+## Unreleased
+
+- Accept IEC capacity units (GiB/MiB and related sizes) from newer dmidecode
+  output, restoring module/installed capacity and memory-array limits.
+- Bound Bluetooth controller discovery to five seconds with probe telemetry;
+  failed/truncated discovery leaves the controller count unknown instead of zero.
+- Stop and reap collector process trees before private staging cleanup on INT/TERM
+  or early failure, including producers in GNU timeout's separate process groups.
+- Add hanging/failed/empty/successful Bluetooth and INT/TERM cleanup regressions.
+- Add standard-profile typed SMBIOS RAM arrays/modules with capacity, DDR type,
+  manufacturer/part number, slot/bank, rank, ECC, rated/configured speeds and
+  explicit missing-tool/access/firmware/truncation coverage. Keep serial/asset
+  identifiers out of acquisition output.
+- Add typed CPU topology/cache/selected ISA features, firmware models, GPU PCI
+  name/driver/available VRAM, disk models/transport/capacity, system
+  battery full/design capacity health, available RAM and swap counters.
+- Reduce duplicate hardware text in automatic snapshots; retain focused evidence
+  under named hardware targets and `all`, without changing the schema or budgets.
+- Add a lossless dictionary-coded `context.ai.json` AI view with round-trip
+  validation, residual scanning and manifest/archive coverage.
+- Add hardware parser/sysfs/privacy fixtures and memory-collector integration tests.
+
 ## 1.0.0
 
 - Fixed the Docker local-socket regression fixture so it validates the security invariant (explicit local Unix-socket pinning) without assuming a rootless socket wins over a real `/run/docker.sock` on developer workstations.

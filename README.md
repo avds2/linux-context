@@ -253,6 +253,7 @@ Typical output:
 ```text
 linux-context-HOST-YYYYMMDDTHHMMSSZ/
 ├── context.json
+├── context.ai.json            # lossless dictionary-coded AI view
 ├── manifest.sha256
 ├── REDACTION-REPORT.md
 ├── meta/
@@ -286,6 +287,25 @@ This is the file an AI should receive/read first. It contains:
 - collector/evidence issue summaries where relevant.
 
 It is intentionally minified and optimized for machine consumption, not human aesthetics.
+
+### `context.ai.json` — lossless compact AI view
+
+For richer hardware inventories, this alternate entrypoint reduces repeated
+attribute names, device types and relation predicates using small dictionaries.
+It keeps every canonical fact, value, relationship, provenance row, coverage
+state and evidence route. Its embedded `encoding` explains how to read it.
+Send **one** entrypoint to an AI; there is no benefit to sending both.
+
+To reconstruct the original document exactly:
+
+```bash
+python3 -B -S lib/ai_view.py decode BUNDLE/context.ai.json reconstructed.json
+```
+
+Size savings depend on the inventory. If the dictionary header outweighs the
+savings, this file uses the original canonical encoding, so it is never larger
+in bytes than `context.json`. Actual token savings also depend on the model tokenizer.
+`context.json` remains the canonical v5 format for existing integrations.
 
 ### `meta/graph.json` — overflow graph
 
@@ -348,7 +368,7 @@ Current domains include:
 
 - host identity, distribution and capabilities;
 - kernel/modules/taint/high-value sysctls and source configuration;
-- CPU/memory/PCI/USB/block hardware;
+- CPU topology/cache/features, RAM module/slot/type/speed/manufacturer, GPU model/driver/VRAM, and PCI/USB/block hardware;
 - filesystem/mount/swap/LVM/RAID/ZFS/Btrfs topology;
 - SMART/NVMe/filesystem health where safely available;
 - interfaces, addresses, routes, DNS, sockets and firewall topology;
@@ -370,6 +390,29 @@ Current domains include:
 - bounded high-severity system/kernel journal diagnostics at max tier.
 
 The core does not assume all of these technologies exist. Feature detection is explicit; missing tools/subsystems are represented as unavailable rather than guessed.
+
+### Identifying installed RAM and hardware
+
+From `standard` onward, hardware identity is included as typed facts/entities in
+`context.json`; it does not require `--target all` or reading raw DMI evidence.
+
+```bash
+sudo ./bin/linux-context --profile max
+# Keep extra hardware evidence for a focused follow-up:
+sudo ./bin/linux-context --profile max --target hardware
+```
+
+With optional `dmidecode` installed and firmware access available, the model
+reports memory arrays and modules: capacity, DDR type, manufacturer/part number,
+slot/bank, form factor, rank, rated/configured speed and reported ECC policy.
+Firmware-installed capacity is distinct from RAM visible to Linux. Unknown
+identity, missing tooling and inaccessible firmware are explicit; the exporter
+never guesses DDR type from “16 GB” or installs dependencies automatically.
+
+CPU topology/cache/features, motherboard/BIOS models, GPU PCI name/driver/VRAM,
+disk model/transport and battery full/design capacity are also modeled
+when exposed by the host. Automatic runs omit redundant hardware command dumps;
+focused targets preserve extra evidence. See [hardware model details](docs/COLLECTORS.md#hardware-model-standard-and-above).
 
 ---
 

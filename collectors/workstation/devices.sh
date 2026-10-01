@@ -50,13 +50,25 @@ collector_collect() {
     fi
 
     if command_exists bluetoothctl; then
-        local bt_list bt_count=0
+        local bt_list line bt_count=0
         emit_fact workstation.bluetooth.client_present true 'command -v bluetoothctl' observed 1.0 boolean
-        bt_list=$(LC_ALL=C bluetoothctl list 2>/dev/null || true)
-        if [[ -n "$bt_list" ]]; then
-            while IFS= read -r _; do bt_count=$((bt_count+1)); done <<< "$bt_list"
+        # BlueZ can wait indefinitely when the daemon/bus is unavailable. A
+        # failed probe means unknown, not zero controllers; never parse partial
+        # output or persist personal controller names from this discovery step.
+        if probe_capture bluetooth_list 5 262144 -- bluetoothctl list; then
+            if (( ! LCTX_CAPTURE_TRUNCATED )); then
+                bt_list=$(<"$LCTX_PROBE_FILE")
+                while IFS= read -r line; do
+                    [[ "$line" == Controller\ * ]] && bt_count=$((bt_count+1))
+                done <<< "$bt_list"
+                emit_fact workstation.bluetooth.controller_count "$bt_count" 'bluetoothctl list' observed 1.0 number
+            else
+                record_collector_note 'truncated:bluetooth_list (controller count unknown)'
+            fi
+        else
+            record_collector_note "bluetooth discovery unavailable:bluetooth_list (exit $LCTX_CAPTURE_RC; controller count unknown)"
         fi
-        emit_fact workstation.bluetooth.controller_count "$bt_count" 'bluetoothctl list' observed 1.0 number
+        release_probe
         # No controller is a normal state (for example bluez tools installed on a
         # desktop with Bluetooth disabled/absent), not an evidence failure.
         if (( bluetooth_focused && bt_count > 0 )); then

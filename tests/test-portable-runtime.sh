@@ -56,4 +56,17 @@ for target in '' 'auto,' ',system' 'system,,network'; do
     if "$ROOT/bin/linux-context" --target "$target" --no-archive --output "$t/bad" >/dev/null 2>&1; then exit 1; fi
 done
 if "$ROOT/bin/linux-context" --no-archive --remove-dir-after-archive >/dev/null 2>&1; then exit 1; fi
-printf 'portable timeout, procfs caps, shell flags and strict CLI: ok\n'
+# BusyBox setpriv is present but cannot drop UID/GID; select Python instead.
+(
+    setpriv() { printf 'Usage: setpriv --nnp --inh-caps --ambient-caps\n'; }
+    if setpriv_can_switch_owner; then exit 1; fi
+    if (( EUID == 0 )); then
+        command_exists() { [[ "$1" == setpriv ]]; }
+        bounded_command() { printf '%s\n' "$@" > "$t/owner-command"; }
+        LCTX_OWNER_UID=65534 LCTX_OWNER_GID=65534 LCTX_OWNER_NAME=nobody run_as_output_owner true
+        [[ "$(head -n1 "$t/owner-command")" == python3 ]]
+    fi
+    setpriv() { printf '%s\n' '--reuid --regid --init-groups'; }
+    setpriv_can_switch_owner
+)
+printf 'portable timeout, owner tools, procfs caps, shell flags and strict CLI: ok\n'

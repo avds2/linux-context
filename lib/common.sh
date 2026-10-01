@@ -247,6 +247,15 @@ detect_output_owner() {
     export LCTX_OWNER_UID LCTX_OWNER_GID LCTX_OWNER_SOURCE LCTX_OWNER_NAME LCTX_OWNER_HOME LCTX_OWNER_RUNTIME_DIR
 }
 
+setpriv_can_switch_owner() {
+    # BusyBox ships setpriv without the util-linux UID/GID options. Presence
+    # alone must not disable the Python privilege-drop fallback.
+    local help
+    command_exists setpriv || return 1
+    help=$(LC_ALL=C setpriv --help 2>&1) || return 1
+    [[ "$help" == *'--reuid'* && "$help" == *'--regid'* && "$help" == *'--init-groups'* ]]
+}
+
 run_as_output_owner() {
     # Execute a read-only probe in the invoking user's scope when the collector
     # itself is running under sudo. This is important for rootless containers,
@@ -265,7 +274,7 @@ run_as_output_owner() {
         fi
         if command_exists runuser && [[ -n "$name" ]]; then
             bounded_command runuser -u "$name" -- "${envv[@]}" "$@"
-        elif command_exists setpriv; then
+        elif setpriv_can_switch_owner; then
             bounded_command setpriv --reuid "$LCTX_OWNER_UID" --regid "$LCTX_OWNER_GID" --init-groups "${envv[@]}" "$@"
         else
             bounded_command python3 -B -S "${BASH_SOURCE[0]%/*}/as_owner.py" "$LCTX_OWNER_UID" "$LCTX_OWNER_GID" "${envv[@]}" "$@"

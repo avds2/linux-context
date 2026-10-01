@@ -59,6 +59,7 @@ Recommended:
       Exhaustive target-specific diagnostic acquisition, still bounded/read-only/redacted.
 
 AI contract:
+  context.ai.json                     Lossless dictionary-coded AI view.
   context.json                        Canonical compact typed host graph/index.
   meta/evidence.json                  Evidence routing catalog; open only on demand.
   meta/collection.json                Collector/probe telemetry; not host context.
@@ -263,6 +264,11 @@ log INFO 'compiling compact canonical AI context'
 compile_context || fatal "canonical context compilation/validation failed: $LCTX_OUTPUT_DIR/meta/validation.json"
 # Defense in depth: sanitize compiler-generated JSON/metadata too, then rescan.
 sanitize_bundle_text_in_place || fatal 'final bundle redaction pass failed'
+# Derive a lossless AI view from sanitized canonical data, before the final
+# residual scan and manifest. It receives the same privacy/publication contract.
+lctx_python "$LCTX_PROJECT_ROOT/lib/ai_view.py" encode \
+    "$LCTX_OUTPUT_DIR/context.json" "$LCTX_OUTPUT_DIR/context.ai.json" \
+    || fatal 'lossless AI view generation failed'
 final_scan || fatal "residual secret-risk scan failed: $LCTX_OUTPUT_DIR/meta/redaction.json"
 # Redaction rewrites first-party JSON structurally, so validate once more afterward.
 compile_validation_only() {
@@ -282,5 +288,6 @@ cleanup_tmp
 if (( LCTX_ARCHIVE && ! LCTX_KEEP_DIR )); then remove_published_bundle; fi
 
 printf 'Bundle: %s\n' "$LCTX_OUTPUT_DIR"
+if (( LCTX_KEEP_DIR )); then printf 'AI context: %s/context.ai.json\n' "$LCTX_OUTPUT_DIR"; fi
 if [[ -n "$archive_path" ]]; then printf 'Archive: %s\n' "$archive_path"; fi
 exit 0

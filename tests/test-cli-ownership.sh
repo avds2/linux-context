@@ -2,7 +2,8 @@
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 parent=$(mktemp -d)
-trap 'rm -rf "$parent"' EXIT
+trap 'rc=$?; if (( rc )); then printf "CLI ownership fixture failed at line %s\n" "$LINENO" >&2; [[ ! -f "$parent/stderr" ]] || cat "$parent/stderr" >&2; fi; rm -rf "$parent"; exit "$rc"' EXIT
+trap 'printf "ownership assertion/command failed at line %s: %s\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 out="$parent/bundle"
 
 if (( EUID == 0 )) && getent passwd 65534 >/dev/null 2>&1 && \

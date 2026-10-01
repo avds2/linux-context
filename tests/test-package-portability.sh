@@ -5,7 +5,7 @@ t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 mkdir -p "$t/bin" "$t/private"
 export LCTX_PROJECT_ROOT="$ROOT" LCTX_PRIVATE_TMP="$t/private"
 export LCTX_PROFILE=deep LCTX_TARGETS=auto LCTX_COMMAND_TIMEOUT=2 LCTX_COMMAND_MAX_BYTES=4096 LCTX_MAX_ITEMS=100
-export LCTX_TIMEOUT_BACKEND=gnu
+export LCTX_TIMEOUT_BACKEND=python
 for cmd in dpkg-query rpm pacman apk; do
     cat > "$t/bin/$cmd" <<'SH'
 #!/usr/bin/env bash

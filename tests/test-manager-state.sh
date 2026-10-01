@@ -20,7 +20,7 @@ cat > "$t/bin/systemctl" <<'SH'
 echo "$NETWORKD_STATE"
 SH
 chmod +x "$t/bin"/*
-export PATH="$t/bin:$PATH" LCTX_COMMAND_TIMEOUT=1 LCTX_TIMEOUT_BACKEND=gnu LCTX_TARGETS=auto
+export PATH="$t/bin:$PATH" LCTX_COMMAND_TIMEOUT=1 LCTX_TIMEOUT_BACKEND=python LCTX_TARGETS=auto
 for mode in running stopped failed; do
     (
         export NM_MODE="$mode" NETWORKD_STATE=active

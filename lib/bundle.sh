@@ -107,12 +107,7 @@ final_scan() {
 }
 
 write_manifest() {
-    local manifest="$LCTX_OUTPUT_DIR/manifest.sha256"
-    : > "$manifest"
-    while IFS= read -r -d '' file; do
-        [[ "$file" == "$manifest" ]] && continue
-        printf '%s  %s\n' "$(sha256_file "$file")" "${file#"$LCTX_OUTPUT_DIR/"}" >> "$manifest"
-    done < <(find "$LCTX_OUTPUT_DIR" -type f -print0 | LC_ALL=C sort -z)
+    lctx_python "$LCTX_PROJECT_ROOT/lib/manifest.py" "$LCTX_OUTPUT_DIR"
 }
 
 secure_and_handoff_bundle() {

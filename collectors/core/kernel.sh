@@ -9,15 +9,23 @@ COLLECTOR_DESCRIPTION='Kernel identity, modules, taint, effective high-value sys
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd)/collector_api.sh"
 
 collector_collect() {
-    local release modules_tree present taint
+    local release modules_tree present taint container=0 other_tree=0 tree
     release=$(LC_ALL=C uname -r 2>/dev/null || true)
     if [[ -n "$release" ]]; then
-        modules_tree="/usr/lib/modules/$release"
+        modules_tree="/lib/modules/$release"
+        [[ -d "$modules_tree" ]] || modules_tree="/usr/lib/modules/$release"
         [[ -d "$modules_tree" ]] && present=true || present=false
         emit_fact system.kernel.running_modules_tree_present "$present" "$modules_tree" observed 1.0 boolean
         if [[ "$present" == false ]]; then
-            emit_fact system.kernel.reboot_recommended true "$modules_tree missing for running kernel" inferred 0.95 boolean
-            record_collector_note 'Running kernel module tree is absent; the host may have upgraded its kernel since the last boot.'
+            [[ -e /.dockerenv || -e /run/.containerenv || -r /run/systemd/container ]] && container=1
+            if (( ! container )) && command_exists systemd-detect-virt && bounded_command systemd-detect-virt --container --quiet; then container=1; fi
+            for tree in /lib/modules/* /usr/lib/modules/*; do [[ -d "$tree" && "${tree##*/}" != "$release" ]] && other_tree=1; done
+            if (( ! container && other_tree )); then
+                emit_fact system.kernel.reboot_recommended true "$modules_tree missing; other module trees installed" inferred 0.6 boolean
+                record_collector_note 'Running kernel module tree is absent while other versions are installed; check whether a kernel upgrade requires reboot.'
+            else
+                record_collector_note 'Running kernel module tree is not visible; containers and kernels without packaged modules normally lack it.'
+            fi
         fi
     fi
     if [[ -r /proc/sys/kernel/tainted ]]; then
@@ -30,7 +38,7 @@ collector_collect() {
     [[ -r /proc/modules ]] && run_capture modules "$LCTX_COMMAND_TIMEOUT" 524288 --priority 65 -- cat /proc/modules || true
 
     if profile_at_least deep; then
-        [[ -d /usr/lib/modules ]] && run_shell_capture available_module_trees 5 131072 'find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf "%f\n" 2>/dev/null | sort -V' || true
+        run_shell_capture available_module_trees 5 131072 'for tree in /lib/modules/* /usr/lib/modules/*; do [ -d "$tree" ] && printf "%s\n" "${tree##*/}"; done | sort -u' || true
         # Strip comments/blank lines: source semantics matter; packaging commentary does not.
         run_shell_capture kernel_config_sources 10 524288 '
             for f in /etc/sysctl.conf /etc/sysctl.d/*.conf /usr/local/lib/sysctl.d/*.conf /etc/modprobe.d/*.conf /usr/local/lib/modprobe.d/*.conf /etc/modules-load.d/*.conf /usr/local/lib/modules-load.d/*.conf; do
@@ -52,7 +60,7 @@ collector_collect() {
               net.ipv4.tcp_syncookies net.ipv4.conf.all.accept_redirects net.ipv4.conf.all.send_redirects
               net.ipv6.conf.all.forwarding net.ipv6.conf.all.accept_redirects
             "
-            for k in $keys; do sysctl "$k" 2>/dev/null || true; done' || true
+            sysctl $keys 2>/dev/null || true' || true
         if profile_at_least max && { target_requested kernel || target_requested system; }; then
             # `sysctl -a` can return non-zero when one or more dynamic/procfs keys are
             # unreadable even while producing a complete, useful listing. The curated

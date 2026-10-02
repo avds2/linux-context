@@ -52,6 +52,8 @@ collector_collect() {
 
         default_route=$(LC_ALL=C ip route show default 2>/dev/null | head -n1 || true)
         [[ -n "$default_route" ]] && emit_fact network.default_route "$default_route" 'ip route show default'
+        default_route=$(bounded_command ip -6 route show default 2>/dev/null | head -n1 || true)
+        [[ -n "$default_route" ]] && emit_fact network.default_route_ipv6 "$default_route" 'ip -6 route show default'
 
         # Canonical state above is enough for broad machine understanding. Large
         # per-link dumps are retained only for a focused network/container
@@ -62,6 +64,7 @@ collector_collect() {
             run_capture netns "$LCTX_COMMAND_TIMEOUT" 131072 --priority 60 -- ip netns list || true
         fi
         run_capture routes "$LCTX_COMMAND_TIMEOUT" 524288 --priority 95 -- ip -details route show table all || true
+        run_capture routes_ipv6 "$LCTX_COMMAND_TIMEOUT" 524288 --priority 90 -- ip -6 -details route show table all || true
         run_capture rules "$LCTX_COMMAND_TIMEOUT" 131072 --priority 75 -- ip rule show || true
         if target_requested network || target_requested security; then
             run_capture neighbors "$LCTX_COMMAND_TIMEOUT" 262144 --priority 35 -- ip neigh show || true
@@ -74,7 +77,9 @@ collector_collect() {
             declare -A seen_socket=() seen_process=()
             while read -r proto state recvq sendq local_ep peer_ep rest; do
                 [[ -n "${proto:-}" && -n "${local_ep:-}" ]] || continue
-                endpoint="$local_ep"; [[ "$endpoint" == \*:* ]] && { port=${endpoint##*:}; endpoint="[::]:$port"; }
+                # A wildcard from ss does not prove IPv6. Preserve its literal
+                # endpoint instead of inventing an address family.
+                endpoint="$local_ep"
                 socket_id="socket:${proto}:${endpoint}"
                 if [[ -z "${seen_socket[$socket_id]:-}" ]]; then
                     seen_socket[$socket_id]=1
@@ -120,7 +125,7 @@ collector_collect() {
     capture_file_if_readable hosts /etc/hosts 262144 70 || true
     capture_file_if_readable nsswitch_conf /etc/nsswitch.conf 131072 75 || true
     if command_exists resolvectl; then
-        if LC_ALL=C resolvectl status >/dev/null 2>&1; then
+        if bounded_command resolvectl status >/dev/null 2>&1; then
             emit_fact network.dns.systemd_resolved true resolvectl observed 1.0 boolean
             run_capture resolvectl "$LCTX_COMMAND_TIMEOUT" 524288 --priority 90 -- resolvectl status || true
         else
@@ -129,7 +134,10 @@ collector_collect() {
     fi
 
     command_exists nft && run_capture nft_ruleset 15 786432 --priority 100 -- nft list ruleset || true
-    ! command_exists nft && command_exists iptables-save && run_capture iptables "$LCTX_COMMAND_TIMEOUT" 786432 --priority 100 -- iptables-save || true
+    # nft being installed says nothing about whether legacy iptables rules are
+    # active. Coexisting tooling must not hide the other firewall's state.
+    command_exists iptables-save && run_capture iptables "$LCTX_COMMAND_TIMEOUT" 786432 --priority 95 -- iptables-save || true
+    command_exists ip6tables-save && run_capture ip6tables "$LCTX_COMMAND_TIMEOUT" 786432 --priority 90 -- ip6tables-save || true
     if command_exists firewall-cmd; then
         run_capture firewalld_state 10 131072 --priority 90 -- firewall-cmd --state || true
         run_capture firewalld_zones 15 524288 --priority 85 -- firewall-cmd --list-all-zones || true

@@ -14,9 +14,7 @@ shell-check:
 	@bash -n bin/linux-context
 
 python-check:
-	@PYTHONDONTWRITEBYTECODE=1 python3 -B -S -m py_compile lib/*.py
-	@find . -type d -name __pycache__ -prune -exec rm -rf {} +
-	@find . -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+	@python3 -B -S -c 'from pathlib import Path; [compile(p.read_bytes(), str(p), "exec") for p in Path("lib").glob("*.py")]'
 
 version:
 	@./bin/linux-context --version

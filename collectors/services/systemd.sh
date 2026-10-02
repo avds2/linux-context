@@ -8,7 +8,12 @@ COLLECTOR_BASELINE=0
 COLLECTOR_DESCRIPTION='Compact effective systemd state: active/enabled/failed/custom units are canonical; exhaustive unit detail is target-only.'
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd)/collector_api.sh"
 
-collector_detect() { command_exists systemctl && systemctl list-units --no-legend --no-pager >/dev/null 2>&1; }
+collector_detect() {
+    # Installed clients/wrapper scripts do not prove this PID namespace runs a
+    # systemd manager. In containers they can even return success with prose.
+    [[ -d /run/systemd/system ]] || return 1
+    command_exists systemctl && bounded_command systemctl list-units --no-legend --no-pager >/dev/null 2>&1
+}
 
 _systemd_explicit() { target_requested systemd || target_requested services; }
 
@@ -31,6 +36,7 @@ _emit_service_block() {
         case "$unit_file" in enabled|enabled-runtime|linked|linked-runtime) enabled_count=$((enabled_count+1));; esac
         custom=false
         if [[ "$fragment" == /etc/systemd/* || "$fragment" == /usr/local/* ]]; then custom=true; fi
+        if [[ "$scope" == user && -n "${LCTX_OWNER_HOME:-}" && "$fragment" == "$LCTX_OWNER_HOME/.config/systemd/user/"* ]]; then custom=true; fi
 
         # Broad auto scans model services that define the current machine:
         # active, enabled/masked, failed/non-success, overridden or locally
@@ -112,7 +118,8 @@ _emit_service_block() {
     emit_fact "systemd.${scope}.service_count" "$total" "$source" observed 1.0 number
     emit_fact "systemd.${scope}.active_service_count" "$active_count" "$source" observed 1.0 number
     emit_fact "systemd.${scope}.enabled_service_count" "$enabled_count" "$source" observed 1.0 number
-    emit_fact "systemd.${scope}.modeled_service_count" "$relevant_count" "$source" observed 1.0 number
+    emit_fact "systemd.${scope}.modeled_service_count" "$((count < LCTX_MAX_ITEMS ? count : LCTX_MAX_ITEMS))" "$source" observed 1.0 number
+    emit_fact "systemd.${scope}.relevant_service_count" "$relevant_count" "$source" observed 1.0 number
     if [[ "$scope" == user && "$exhaustive" != true && "$relevant_count" -lt "$total" ]]; then
         record_collector_note 'Broad max summarizes transient/vendor user services by counts; explicit --target systemd/services models the full user manager.'
     fi
@@ -125,6 +132,10 @@ _collect_system_services() {
         -p Id -p Description -p LoadState -p ActiveState -p SubState -p UnitFileState \
         -p FragmentPath -p DropInPaths -p MainPID -p ControlGroup -p Result -p Restart \
         -p MemoryCurrent -p TasksCurrent -p CPUUsageNSec; then
+        if (( LCTX_CAPTURE_TRUNCATED )); then
+            emit_fact systemd.system.inventory_limited true 'systemctl show --type=service' observed 1.0 boolean
+            record_collector_note 'Service inventory was truncated; observed counts are lower bounds.'
+        fi
         _emit_service_block 'systemd-unit:' service runs 'systemctl show --type=service' system < "$LCTX_PROBE_FILE"
         release_probe
         return 0
@@ -135,14 +146,17 @@ _collect_system_services() {
     while read -r unit load active sub _; do
         [[ -n "${unit:-}" ]] || continue
         total=$((total+1)); if [[ "$active" == active ]]; then active_count=$((active_count+1)); fi
+        (( total <= LCTX_MAX_ITEMS )) || continue
         emit_entity "systemd-unit:$unit" service "$unit" 'systemctl list-units --type=service'
         if [[ "$load" != loaded ]]; then emit_entity_attr "systemd-unit:$unit" load_state "$load" 'systemctl list-units --type=service'; fi
         emit_entity_attr "systemd-unit:$unit" active_state "$active" 'systemctl list-units --type=service'
         emit_entity_attr "systemd-unit:$unit" sub_state "$sub" 'systemctl list-units --type=service'
         if [[ "$active" == active ]]; then emit_relation host:local runs "systemd-unit:$unit" 'systemctl list-units --type=service'; fi
-    done < <(LC_ALL=C systemctl list-units --type=service --all --no-legend --plain 2>/dev/null || true)
+    done < <(bounded_command systemctl list-units --type=service --all --no-legend --plain 2>/dev/null || true)
     emit_fact systemd.system.service_count "$total" 'systemctl list-units --type=service' observed 1.0 number
     emit_fact systemd.system.active_service_count "$active_count" 'systemctl list-units --type=service' observed 1.0 number
+    (( total > LCTX_MAX_ITEMS )) && record_collector_note "fallback service entity limit reached: $LCTX_MAX_ITEMS"
+    return 0
 }
 
 _collect_user_services() {
@@ -161,7 +175,7 @@ _collect_user_services() {
 collector_collect() {
     local failed_count
     emit_fact init.system systemd systemctl
-    failed_count=$(LC_ALL=C systemctl --failed --no-legend --plain 2>/dev/null | awk 'NF {n++} END {print n+0}')
+    failed_count=$(bounded_command systemctl --failed --no-legend --plain 2>/dev/null | awk 'NF {n++} END {print n+0}')
     emit_fact systemd.failed_unit_count "$failed_count" 'systemctl --failed' observed 1.0 number
 
     _collect_system_services

@@ -8,16 +8,18 @@ COLLECTOR_BASELINE=0
 COLLECTOR_DESCRIPTION='Local Docker daemon and compact container/network/port/mount topology without environment values or arbitrary labels.'
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib" && pwd)/collector_api.sh"
 
+_docker_is_local_socket() { [[ "$1" == /* && -S "$1" ]]; }
+
 _docker_local_socket_exists() {
     local path
     for path in /run/docker.sock /var/run/docker.sock "${LCTX_OWNER_RUNTIME_DIR:-}/docker.sock"; do
-        [[ -n "$path" && -S "$path" ]] && return 0
+        [[ "$path" != /docker.sock ]] && _docker_is_local_socket "$path" && return 0
     done
     # A caller may intentionally use a nonstandard *local Unix* socket. Remote
     # tcp/ssh Docker endpoints and DOCKER_CONTEXT are never honored.
     if [[ "${DOCKER_HOST:-}" == unix://* ]]; then
         path=${DOCKER_HOST#unix://}
-        [[ -S "$path" ]] && return 0
+        _docker_is_local_socket "$path" && return 0
     fi
     return 1
 }
@@ -34,12 +36,12 @@ collector_collect() {
     local -a ids=() batch=() system_sockets=() owner_sockets=()
     declare -A network_ids=() seen_socket=()
 
-    [[ -S /run/docker.sock ]] && system_sockets+=(/run/docker.sock)
-    [[ -S /var/run/docker.sock ]] && system_sockets+=(/var/run/docker.sock)
-    if [[ "${DOCKER_HOST:-}" == unix://* && -S "${DOCKER_HOST#unix://}" ]]; then
+    _docker_is_local_socket /run/docker.sock && system_sockets+=(/run/docker.sock)
+    _docker_is_local_socket /var/run/docker.sock && system_sockets+=(/var/run/docker.sock)
+    if [[ "${DOCKER_HOST:-}" == unix://* ]] && _docker_is_local_socket "${DOCKER_HOST#unix://}"; then
         system_sockets+=("${DOCKER_HOST#unix://}")
     fi
-    [[ -n "${LCTX_OWNER_RUNTIME_DIR:-}" && -S "${LCTX_OWNER_RUNTIME_DIR}/docker.sock" ]] && owner_sockets+=("${LCTX_OWNER_RUNTIME_DIR}/docker.sock")
+    [[ -n "${LCTX_OWNER_RUNTIME_DIR:-}" ]] && _docker_is_local_socket "${LCTX_OWNER_RUNTIME_DIR}/docker.sock" && owner_sockets+=("${LCTX_OWNER_RUNTIME_DIR}/docker.sock")
 
     # One explicit local-socket daemon round-trip both verifies accessibility and
     # supplies canonical engine state. Passing --host is a security boundary: an
@@ -47,7 +49,7 @@ collector_collect() {
     local info_template='{{printf "%s\t%s\t%s\t%d\t%d" .ServerVersion .Driver .CgroupDriver .Containers .ContainersRunning}}'
     for path in "${system_sockets[@]}"; do
         [[ -n "${seen_socket[$path]+x}" ]] && continue; seen_socket[$path]=1
-        if value=$(docker --host "unix://$path" info --format "$info_template" 2>/dev/null); then
+        if value=$(bounded_command docker --host "unix://$path" info --format "$info_template" 2>/dev/null); then
             DOCKER_SCOPE=system; DOCKER_ENDPOINT="unix://$path"; break
         fi
     done
@@ -72,7 +74,7 @@ collector_collect() {
         if [[ "$DOCKER_SCOPE" == owner ]]; then
             run_as_output_owner docker --host "$DOCKER_ENDPOINT" "$@"
         else
-            docker --host "$DOCKER_ENDPOINT" "$@"
+            bounded_command docker --host "$DOCKER_ENDPOINT" "$@"
         fi
     }
     docker_capture() {

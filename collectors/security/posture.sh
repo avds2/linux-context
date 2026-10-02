@@ -13,20 +13,18 @@ collector_collect() {
     [[ -r /sys/kernel/security/lockdown ]] && capture_file_if_readable lockdown /sys/kernel/security/lockdown 16384 95 || true
     command_exists getenforce && run_capture selinux_getenforce 10 65536 --priority 90 -- getenforce || true
     command_exists sestatus && run_capture selinux_status 10 131072 --priority 90 -- sestatus || true
+    local apparmor_enabled=''
+    if [[ -r /sys/module/apparmor/parameters/enabled ]]; then
+        IFS= read -r apparmor_enabled < /sys/module/apparmor/parameters/enabled || true
+        case "$apparmor_enabled" in
+            Y) emit_fact security.apparmor.active true /sys/module/apparmor/parameters/enabled observed 1.0 boolean ;;
+            N) emit_fact security.apparmor.active false /sys/module/apparmor/parameters/enabled observed 1.0 boolean ;;
+        esac
+    fi
     if command_exists aa-status; then
-        if aa-status >/dev/null 2>&1; then
-            emit_fact security.apparmor.active true aa-status observed 1.0 boolean
-            run_capture apparmor_status 10 262144 --priority 90 -- aa-status || true
-        else
-            emit_fact security.apparmor.active false aa-status observed 0.95 boolean
-        fi
+        run_capture apparmor_status 10 262144 --priority 90 -- aa-status || true
     elif command_exists apparmor_status; then
-        if apparmor_status >/dev/null 2>&1; then
-            emit_fact security.apparmor.active true apparmor_status observed 1.0 boolean
-            run_capture apparmor_status 10 262144 --priority 90 -- apparmor_status || true
-        else
-            emit_fact security.apparmor.active false apparmor_status observed 0.95 boolean
-        fi
+        run_capture apparmor_status 10 262144 --priority 90 -- apparmor_status || true
     fi
     (( EUID == 0 )) && command_exists auditctl && run_capture audit_status 10 131072 --priority 85 -- auditctl -s || true
 
@@ -45,7 +43,7 @@ collector_collect() {
     # Per-unit systemd sandbox scoring can be surprisingly expensive on small
     # VPSes and duplicates much of the service model. Keep it for an explicit
     # security investigation, not broad automatic max.
-    if profile_at_least max && target_requested security && command_exists systemd-analyze && command_exists systemctl && systemctl list-units --no-pager >/dev/null 2>&1; then
+    if profile_at_least max && target_requested security && [[ -d /run/systemd/system ]] && command_exists systemd-analyze && command_exists systemctl && bounded_command systemctl list-units --no-pager >/dev/null 2>&1; then
         run_capture systemd_security 25 786432 --priority 90 -- systemd-analyze security --no-pager || true
     fi
 }

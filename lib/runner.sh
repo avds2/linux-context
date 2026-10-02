@@ -75,13 +75,16 @@ _bounded_capture() {
     shift
     local cap=$(( max_bytes + 1 )) cmd_rc head_rc bytes truncated=0 timed_out=0 start_ms end_ms
     epoch_millis_into start_ms
-    set +e
-    LC_ALL=C LANG=C TZ=UTC TERM=dumb timeout --signal=TERM --kill-after=2s "${timeout_seconds}s" \
-        "$@" </dev/null 2>&1 | head -c "$cap" > "$out"
-    local -a pipeline_status=("${PIPESTATUS[@]}")
-    cmd_rc=${pipeline_status[0]:-1}
-    head_rc=${pipeline_status[1]:-1}
-    set -e
+    # Do not change the caller's errexit setting. The pipeline is conditional so
+    # both statuses remain inspectable under set -e/pipefail.
+    local -a pipeline_status=()
+    if LC_ALL=C LANG=C TZ=UTC TERM=dumb lctx_timeout "$timeout_seconds" \
+        "$@" </dev/null 2>&1 | head -c "$cap" > "$out"; then
+        pipeline_status=("${PIPESTATUS[@]}")
+    else
+        pipeline_status=("${PIPESTATUS[@]}")
+    fi
+    cmd_rc=${pipeline_status[0]:-1}; head_rc=${pipeline_status[1]:-1}
     epoch_millis_into end_ms
 
     bytes=$(file_size_bytes "$out")
@@ -96,7 +99,7 @@ _bounded_capture() {
     # A failed sink is a collection failure too. `head` normally returns zero; a
     # non-zero status means evidence could not be bounded/written reliably.
     if (( head_rc != 0 && cmd_rc == 0 )); then cmd_rc=$head_rc; fi
-    if (( cmd_rc == 124 )); then timed_out=1; fi
+    if (( cmd_rc == 124 || cmd_rc == 137 )); then timed_out=1; fi
 
     LCTX_CAPTURE_RC=$cmd_rc
     LCTX_CAPTURE_TRUNCATED=$truncated
@@ -151,22 +154,25 @@ run_shell_capture() {
 
 capture_file_if_readable() {
     local label="$1" path="$2" max_bytes="${3:-$LCTX_COMMAND_MAX_BYTES}" priority="${4:-50}"
-    local name staged size bytes truncated=0 start_ms end_ms rc=0 accepted=0
+    local name staged bytes truncated=0 start_ms end_ms rc=0 accepted=0
     [[ -r "$path" && -f "$path" ]] || return 1
     safe_name_into name "$label"
     _claim_artifact_label "$name" || return $?
     mkdir -p "$LCTX_SECTION_DIR"
     staged="$LCTX_SECTION_DIR/${name}.txt"
-    size=$(file_size_bytes "$path" 2>/dev/null || printf 0)
     epoch_millis_into start_ms
-    set +e
-    head -c "$max_bytes" -- "$path" > "$staged" 2>/dev/null
-    rc=$?
-    set -e
+    if head -c "$((max_bytes+1))" -- "$path" > "$staged" 2>/dev/null; then rc=0; else rc=$?; fi
     epoch_millis_into end_ms
     (( rc == 0 )) && accepted=1
-    [[ "$size" =~ ^[0-9]+$ ]] && (( size > max_bytes )) && truncated=1
     bytes=$(file_size_bytes "$staged")
+    # procfs/sysfs commonly report stat size zero despite readable content.
+    # Observe the actual extra byte instead of trusting st_size.
+    if (( bytes > max_bytes )); then
+        truncated=1
+        head -c "$max_bytes" "$staged" > "$staged.trimmed"
+        mv -- "$staged.trimmed" "$staged"
+        bytes=$max_bytes
+    fi
     register_artifact "$name" file "$path" "$rc" "$accepted" 0 "$max_bytes" "$truncated" "$bytes" 0 "$((end_ms-start_ms))" "$priority"
     (( accepted )) || return "$rc"
 }
@@ -242,8 +248,8 @@ run_owner_capture() {
         elif command_exists setpriv; then
             run_capture "$label" "$timeout_seconds" "$max_bytes" "${opts[@]}" --source "owner:$label" -- setpriv --reuid "$LCTX_OWNER_UID" --regid "$LCTX_OWNER_GID" --init-groups "${envv[@]}" "$@"
         else
-            record_collector_note "owner-scope unavailable:$label (runuser/setpriv missing)"
-            return 69
+            run_capture "$label" "$timeout_seconds" "$max_bytes" "${opts[@]}" --source "owner:$label" -- \
+                python3 -B -S "${BASH_SOURCE[0]%/*}/as_owner.py" "$LCTX_OWNER_UID" "$LCTX_OWNER_GID" "${envv[@]}" "$@"
         fi
     else
         run_capture "$label" "$timeout_seconds" "$max_bytes" "${opts[@]}" --source "owner:$label" -- "$@"
@@ -276,7 +282,8 @@ probe_owner_capture() {
         elif command_exists setpriv; then
             probe_capture "$label" "$timeout_seconds" "$max_bytes" --source "owner:$label" -- setpriv --reuid "$LCTX_OWNER_UID" --regid "$LCTX_OWNER_GID" --init-groups "${envv[@]}" "$@"
         else
-            return 69
+            probe_capture "$label" "$timeout_seconds" "$max_bytes" --source "owner:$label" -- \
+                python3 -B -S "${BASH_SOURCE[0]%/*}/as_owner.py" "$LCTX_OWNER_UID" "$LCTX_OWNER_GID" "${envv[@]}" "$@"
         fi
     else
         probe_capture "$label" "$timeout_seconds" "$max_bytes" --source "owner:$label" -- "$@"

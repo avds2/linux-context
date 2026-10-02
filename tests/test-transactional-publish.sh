@@ -10,7 +10,8 @@ parent=$(mktemp -d)
 trap 'rm -rf "$parent"' EXIT
 expected_uid=$(id -u)
 expected_gid=$(id -g)
-if (( EUID == 0 )) && getent passwd 65534 >/dev/null 2>&1; then
+if (( EUID == 0 )) && getent passwd 65534 >/dev/null 2>&1 && \
+    chown "65534:$(getent passwd 65534 | awk -F: 'NR==1{print $4}')" "$parent" 2>/dev/null; then
     export SUDO_UID=65534
     export SUDO_GID
     SUDO_GID=$(getent passwd 65534 | awk -F: 'NR==1{print $4}')

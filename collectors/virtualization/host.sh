@@ -30,7 +30,7 @@ collector_collect() {
         for sock in /run/libvirt/libvirt-sock /run/libvirt/virtproxyd-sock /run/libvirt/virtqemud-sock /var/run/libvirt/libvirt-sock; do
             [[ -S "$sock" ]] && { system_socket=1; break; }
         done
-        if (( system_socket )) && virsh -c qemu:///system uri >/dev/null 2>&1; then
+        if (( system_socket )) && bounded_command virsh -c qemu:///system uri >/dev/null 2>&1; then
             emit_fact virtualization.libvirt.system_accessible true 'local libvirt socket + virsh qemu:///system' observed 1.0 boolean
             run_capture virtual_machines_system 10 262144 --priority 90 -- virsh -c qemu:///system list --all || true
             run_capture libvirt_networks_system 10 262144 --priority 75 -- virsh -c qemu:///system net-list --all || true

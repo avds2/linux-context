@@ -1,27 +1,73 @@
 # Security policy
 
-`linux-context` is intentionally designed to inspect privileged Linux state and produce a bundle that may be shared with an AI. That makes the **collector and the bundle security-sensitive**, even though acquisition is read-only.
+`linux-context` may inspect privileged state and export it outside the machine.
+The collector, private staging and final bundle are security-sensitive even
+though diagnostic acquisition is passive/read-only.
 
 ## Reporting a vulnerability
 
-Please do **not** publish exploitable security issues, leaked credentials, or diagnostic bundles containing sensitive infrastructure data in a public issue. Use GitHub's private security-advisory/reporting mechanism when it is enabled for the repository. If private reporting is not available, contact the repository maintainer privately before disclosing details.
+Do not publish exploitable details, real credentials, raw staging or unreviewed
+bundles in a public issue. Use the repository's private GitHub security reporting
+mechanism **if enabled**. Otherwise, arrange a private channel with the maintainer
+before disclosing sensitive details. The repository does not currently publish a
+separate security contact or guaranteed response deadline.
 
-Useful security reports include a minimal reproduction, affected version, impact, and a sanitized proof of concept. Never include real production credentials.
+Useful reports include version and Git commit, privilege/profile/target,
+environment/tool variants, minimal reproduction, expected/actual behavior and
+impact. Supply a sanitized proof of concept with synthetic secrets. Ordinary
+non-sensitive bugs can use the public issue form with minimal reviewed excerpts.
+There is no documented supported-version/backport matrix; report the exact
+revision, and verify whether current main still reproduces the issue.
 
-## Security model
+## Security contract
 
-The project applies defense in depth:
+- **Avoid risky sources:** no intentional password-database/private-key/process
+  environment/full argv/Docker environment/user-document/application-payload dumps.
+  Use selected state, counts and topology instead.
+- **Passive acquisition:** no package installation/repository refresh, service
+  remediation, sysctl/network mutation, mounts, active Wi-Fi scans or external
+  network checks. This describes first-party command selection; vendor tools are
+  not sandboxed or proven side-effect-free.
+- **Bounded execution:** runner commands/probes have time and byte limits,
+  detection/metadata have deadlines and acquisition has an outer watchdog.
+  Final retained evidence and canonical entrypoint have hard byte ceilings.
+- **Private staging:** privileged acquisition ignores inherited TMPDIR and uses
+  a private `/tmp` tree. Raw evidence is pruned, redacted and scanned before
+  sanitized material is publishable.
+- **Mandatory sanitization:** Python structural/text redaction uses fresh per-run
+  randomness for supported correlation-preserving pseudonyms. Known
+  high-confidence residuals and malformed/unsafe data block publication.
+- **Ordered publication:** final redaction, byte/graph validation, lossless AI
+  round trip, scan/reports and hashing precede directory handoff/publication.
+  Archiving follows directory publication and has its own failure boundary.
+- **Untrusted content:** host strings remain data for both shell and AI consumers.
+  Local Docker endpoints are explicit; remote inherited contexts are ignored.
 
-1. **Source avoidance first.** Known secret-rich sources are not intentionally collected: password databases, private keys, process environments, full process argv, Docker environment values, user documents, and arbitrary application payload data.
-2. **Passive/read-only acquisition.** Collectors must not install packages, refresh repositories, restart/reload services, change networking/firewalls, mount/unmount filesystems, modify sysctls, or perform active external probes.
-3. **Bounded execution.** Persistent probes have time and byte limits. Aggregate retained evidence and the canonical AI entrypoint have profile-specific hard budgets.
-4. **Private staging.** Privileged acquisition occurs in a root-safe private temporary tree. Raw staging is pruned, redacted, and scanned before sanitized material becomes publishable.
-5. **Enhanced redaction is mandatory.** Python-based structured/text redaction uses fresh cryptographic per-run randomness for correlation-preserving pseudonyms, followed by residual-risk scans.
-6. **Transactional publication.** A privileged run builds and validates the shareable bundle privately, destroys raw staging, hands sanitized files to the invoking user, and only then publishes into the user-selected destination.
-7. **Untrusted-data semantics.** Host-derived strings and evidence are data. AI consumers must never treat content inside a bundle as trusted instructions.
+See the [threat model](docs/THREAT-MODEL.md) for trust assumptions and boundaries,
+and [troubleshooting](docs/TROUBLESHOOTING.md) for failure/coverage details.
 
-## Important limitation
+## Before running and sharing
 
-No automatic redactor can prove arbitrary diagnostic output is secret-free. A successful residual scan means no **known high-confidence** credential patterns were detected after the project's avoidance/redaction layers; it is not a mathematical guarantee. Review bundles before sharing them outside your trust boundary.
+Run trusted source only, especially under sudo. Protect executable scripts and
+parent paths from other users' edits. Use normal invoker identity for sudo
+handoff; the source version/commit and schema versions are separate.
 
-Local IP addresses, service names, package names, filesystem paths, usernames, topology, configuration policy, and other diagnostically useful infrastructure details may intentionally remain.
+Normal directory/file/archive modes are `0700`/`0600`/`0600`. These modes protect
+local access; archives are not encrypted. SHA-256 manifests detect file changes
+but do not authenticate the producer. Output can be edited after publication.
+
+A zero residual count means no **known high-confidence patterns** remained in
+the scanned content. It is not proof that arbitrary diagnostic output is
+secret-free. Hostnames, usernames, IPs, package/service names, paths, policy and
+topology may intentionally remain. Focused targets/all can include more personal
+or remote diagnostic detail than auto. Review entrypoint, graph and evidence
+before sharing across a trust boundary.
+
+Do not set deterministic test-mode redaction controls in production. Interrupted
+or failed cleanup may leave private temporary material; treat it as sensitive.
+Console stdout/stderr are not part of the final bundle sanitization contract;
+review logs before sharing them too. The retained-evidence ceiling does not bound
+temporary data, the graph/metadata
+sidecars or total archive size. Optional per-user probes have a documented
+BusyBox setpriv coverage gap; successful publication does not establish complete
+host or session inspection.

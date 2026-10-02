@@ -1,7 +1,22 @@
 # Changelog
 
-
 ## Unreleased
+
+Unreleased entries describe changes after the 1.0.0 release, even while the
+checkout's `VERSION` remains 1.0.0. Older sections describe historical behavior,
+not the current acquisition/format contract.
+
+### Documentation
+
+- Align user, format, collector, contribution and security guides with current
+  main; clarify AI-first retrieval, baseline/target selection, byte-budget scope,
+  incomplete coverage and directory/archive failure boundaries.
+- Add complete collector/profile/API tables and a troubleshooting guide,
+  including the remaining BusyBox setpriv limitation in optional owner probes.
+- Preserve historical audit measurements with exact revision and CI references;
+  distinguish tool/schema/encoding versions and checkout changes from releases.
+
+### Portability, correctness and performance
 
 - Add lossless AI encoding v2: endpoint references, label/provenance defaults and
   pooled observations; select the smallest of canonical/v1/v2 encodings and keep

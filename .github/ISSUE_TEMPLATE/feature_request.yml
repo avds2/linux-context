@@ -14,7 +14,7 @@ body:
     id: evidence
     attributes:
       label: Proposed evidence / structured model
-      description: Prefer the smallest read-only, passive, secret-safe source that answers the question.
+      description: Describe typed facts/entities/relations, source/provenance, minimum profile/targets, required tools and unknown/failure states; prefer the smallest passive source.
   - type: textarea
     id: privacy
     attributes:

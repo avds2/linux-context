@@ -11,7 +11,7 @@ body:
     id: version
     attributes:
       label: linux-context version
-      description: Output of `./bin/linux-context --version`
+      description: Output of `./bin/linux-context --version`; for checkouts also include `git rev-parse HEAD`. Unreleased checkouts can share a version string with a release.
       placeholder: linux-context 1.0.0
     validations:
       required: true
@@ -26,18 +26,19 @@ body:
     id: targets
     attributes:
       label: Target expression
-      placeholder: auto, all, network,docker, ...
+      placeholder: e.g. auto OR all OR network,docker
   - type: textarea
     id: environment
     attributes:
       label: Environment
-      description: Distribution/version, kernel, architecture, privilege mode, and any relevant subsystem versions. Remove hostnames, addresses, IDs, and secrets unless required.
+      description: Distribution/version, kernel, architecture, Bash/Python versions, privilege/container mode, and relevant subsystem versions. Remove hostnames, addresses, IDs, and secrets unless required.
     validations:
       required: true
   - type: textarea
     id: reproduction
     attributes:
       label: Reproduction steps
+      description: Include the exact command, jobs/output options and whether collection, publication or archive creation failed.
     validations:
       required: true
   - type: textarea
@@ -50,5 +51,6 @@ body:
     id: actual
     attributes:
       label: Actual behavior / sanitized logs
+      description: Include minimal reviewed stderr and relevant validation/telemetry fields; do not post raw staging or unreviewed bundles.
     validations:
       required: true

@@ -1,6 +1,14 @@
-# Review and validation
+# Historical implementation review and validation
 
-Reviewed baseline: `2615be74c2670ac7de4ccd1c52a0b882a5d16aff` (2026-10-01).
+This is a historical record of the 2026-10-01 implementation review, not a
+current security certification or a promise of universal compatibility.
+
+Reviewed baseline: `2615be74c2670ac7de4ccd1c52a0b882a5d16aff`.
+Validated implementation: `76a4a2da70b5c3d391df237cdeed6df10d72ec1f`, merged
+into main as `1b513b8bdec8f64fd11e85d3095ca83b94435358` via PR #3.
+Current usage/format/limits are documented in [README](../README.md),
+[FORMAT](FORMAT.md), [COLLECTORS](COLLECTORS.md) and
+[TROUBLESHOOTING](TROUBLESHOOTING.md).
 The supplied bundle was inspected locally; its contents are not checked into
 this public repository. Measurements below describe this revision, not a
 performance guarantee for every Linux host.
@@ -66,11 +74,16 @@ checks have a cost; safety gates remain enabled in these measurements.
   pre-existing privacy/ownership/path/target checks.
 - `tests/smoke-distribution.sh`: all four profiles, archive creation, SHA-256,
   exact AI decoding, reported byte sizes and residual scanning on the local host.
-- CI adds Debian 12, Fedora 43, Arch and Alpine 3.22 containers; Alpine deliberately
-  keeps BusyBox tools. Existing Python 3.9/3.11/3.13 jobs remain.
+- [CI run 36925555605](https://github.com/avds2/linux-context/actions/runs/36925555605):
+  all seven jobs passed, including Debian 12, Fedora 43, Arch and Alpine 3.22
+  check/smoke containers and Python 3.9/3.11/3.13 regression jobs. Alpine keeps
+  BusyBox tools, including timeout/find/stat/mv/setpriv.
 - This local namespace maps only UID 0. Sudo ownership fixtures therefore report
   current-user-only coverage; the fallback's drop/exec order is unit-tested, and
-  full mapped ownership is exercised by capable CI hosts.
+  full mapped ownership to UID/GID 65534 passed in CI, including Python
+  publication handoff on Alpine. This does not exercise every optional per-user
+  subsystem probe; runner owner probes still have a
+  [BusyBox setpriv gap](TROUBLESHOOTING.md#per-user-probes-on-busybox).
 - Docker endpoint fixtures inject only the filesystem socket predicate. Command
   selection, local endpoint pinning, templates and parsing run unchanged without
   requiring sockets or a host daemon in restricted execution environments.

@@ -126,6 +126,7 @@ jobs:
               --draft --target "$RELEASE_COMMIT" --title "linux-context $RELEASE_TAG" \
               --notes-file "$RUNNER_TEMP/release-notes.md"
           fi
+          mkdir -p "$RUNNER_TEMP/downloaded"
           gh release download "$RELEASE_TAG" --pattern 'linux-context-*.tar.gz*' --dir "$RUNNER_TEMP/downloaded"
           (cd "$RUNNER_TEMP/downloaded" && sha256sum -c "linux-context-v$RELEASE_VERSION.tar.gz.sha256")
           cmp "$archive" "$RUNNER_TEMP/downloaded/linux-context-v$RELEASE_VERSION.tar.gz"

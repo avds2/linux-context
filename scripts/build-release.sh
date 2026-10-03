@@ -13,7 +13,7 @@ checksum="$archive.sha256"
 [[ ! -e "$archive" && ! -e "$checksum" ]] || { printf 'Release output already exists\n' >&2; exit 1; }
 work=$(mktemp -d "$output/.release.XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
-git -C "$ROOT" archive --format=tar --prefix="$base/" HEAD | gzip -n > "$work/$base.tar.gz"
+git -C "$ROOT" -c tar.umask=0022 archive --format=tar --prefix="$base/" HEAD | gzip -n > "$work/$base.tar.gz"
 (cd "$work" && sha256sum "$base.tar.gz" > "$base.tar.gz.sha256" && sha256sum -c "$base.tar.gz.sha256")
 mv -- "$work/$base.tar.gz" "$archive"
 mv -- "$work/$base.tar.gz.sha256" "$checksum"

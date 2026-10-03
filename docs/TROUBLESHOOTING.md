@@ -16,7 +16,8 @@ From the source root:
 git rev-parse HEAD
 ```
 
-`VERSION` may still be `1.0.0` on a checkout containing newer Unreleased changes.
+`VERSION` may match a tagged release (for example `1.1.0`) even when a checkout
+contains newer Unreleased changes.
 List commands inspect metadata, not actual host support. The launcher expects
 Linux, Bash 4+, Python 3.9+, executable collectors, common utilities and archive
 tooling unless `--no-archive` is used. Use the entire trusted project directory,

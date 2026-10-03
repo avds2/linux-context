@@ -196,9 +196,22 @@ Keep historical changelog entries as history; use Unreleased for new behavior.
 `VERSION` is the tool version source. Do not infer a new release number from a
 schema bump or a merge. When preparing a release, intentionally update VERSION
 and current-version examples, move Unreleased entries to the release section and
-validate the exact tagged tree. No automated release-packaging workflow currently
-ships in this repository; published archive/checksum examples depend on the
-maintainer supplying those files. Preserve executable script modes.
+validate the exact tagged tree. Preserve executable script modes.
+
+`bash scripts/build-release.sh OUTPUT_DIR` creates the versioned source archive
+and SHA-256 file from Git HEAD, not uncommitted files. Git and gzip/sha256sum are
+build tools, not extra collection dependencies. Gzip timestamps are omitted for
+repeatable bytes from the same committed tree. Existing output files are refused.
+
+The Release workflow runs only after successful CI of a trusted main push. It
+checks out that exact commit, skips already published versions, refuses conflicting
+tags/drafts, builds/tests the extracted archive and verifies downloaded draft
+assets before publishing as latest. It never consumes PR artifacts or runs for
+PR CI. Main must still point at the tested commit at publication. A failed
+same-commit draft can be resumed by rerunning the successful main CI run; a draft
+for another commit requires maintainer review. `contents: write` is scoped to the
+release job. Version changes on main therefore request a stable release after CI;
+do not bump VERSION just to label an unreleased development commit.
 
 PRs should explain the trigger, resulting behavior and validation/limits. Include
 version/commit, distribution and relevant tool variants for portability changes.

@@ -11,7 +11,7 @@ without making a large command dump the initial prompt. Collection inspects the
 machine; it does not perform remediation. Diagnostic data can still be sensitive,
 so review a bundle before sharing it.
 
-The checkout's version is defined by [`VERSION`](VERSION), currently `1.0.0`.
+The checkout's version is defined by [`VERSION`](VERSION), currently `1.1.0`.
 Changes under [Unreleased](CHANGELOG.md#unreleased) may be newer than a tagged
 release with the same version string. Include a Git commit when reporting a
 problem from a checkout.
@@ -259,7 +259,7 @@ to identify the code you run.
 If a release provides a checksum file, verify it before extraction:
 
 ```bash
-sha256sum -c linux-context-v1.0.0.tar.gz.sha256
+sha256sum -c linux-context-v1.1.0.tar.gz.sha256
 ```
 
 This example requires the named files from that release; no checksum file is

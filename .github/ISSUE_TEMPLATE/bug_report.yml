@@ -12,7 +12,7 @@ body:
     attributes:
       label: linux-context version
       description: Output of `./bin/linux-context --version`; for checkouts also include `git rev-parse HEAD`. Unreleased checkouts can share a version string with a release.
-      placeholder: linux-context 1.0.0
+      placeholder: linux-context 1.1.0
     validations:
       required: true
   - type: dropdown

@@ -1,0 +1,145 @@
+name: Release
+
+# Only successful CI of trusted main pushes may publish. PR runs never qualify.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Check out the exact successful CI commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Decide whether this version needs publication
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_COMMIT" ]]
+          current=$(gh api "repos/$GH_REPO/commits/main" --jq .sha)
+          if [[ "$current" != "$RELEASE_COMMIT" ]]; then
+            echo 'Main advanced; wait for CI of its latest commit.'
+            exit 0
+          fi
+          version=$(cat VERSION)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          tag="v$version"
+          gh api --paginate "repos/$GH_REPO/releases" \
+            --jq ".[] | select(.tag_name == \"$tag\")" > "$RUNNER_TEMP/existing-release.json"
+          resume=false
+          if [[ -s "$RUNNER_TEMP/existing-release.json" ]]; then
+            if [[ "$(jq -r .draft "$RUNNER_TEMP/existing-release.json")" == false ]]; then
+              echo "$tag is already published; nothing to do."
+              exit 0
+            fi
+            [[ "$(jq -r .target_commitish "$RUNNER_TEMP/existing-release.json")" == "$RELEASE_COMMIT" ]] || {
+              echo 'Existing draft targets a different commit; refusing replacement.' >&2
+              exit 1
+            }
+            resume=true
+          fi
+          if git rev-parse --verify "refs/tags/$tag" >/dev/null 2>&1; then
+            [[ "$(git rev-parse "$tag^{commit}")" == "$RELEASE_COMMIT" ]] || {
+              echo 'Existing tag points elsewhere; refusing to retag.' >&2
+              exit 1
+            }
+          fi
+          printf 'ready=true\nversion=%s\ntag=%s\nresume=%s\n' "$version" "$tag" "$resume" >> "$GITHUB_OUTPUT"
+      - name: Build and verify the committed source archive
+        if: steps.version.outputs.ready == 'true'
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/build-release.sh "$RUNNER_TEMP/release"
+          mkdir "$RUNNER_TEMP/extracted"
+          tar -xzf "$RUNNER_TEMP/release/linux-context-v$RELEASE_VERSION.tar.gz" -C "$RUNNER_TEMP/extracted"
+          cd "$RUNNER_TEMP/extracted/linux-context-v$RELEASE_VERSION"
+          [[ "$(./bin/linux-context --version)" == "linux-context $RELEASE_VERSION" ]]
+          make check
+          bash tests/smoke-distribution.sh
+      - name: Prepare release notes
+        if: steps.version.outputs.ready == 'true'
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          python3 -B -S - <<'PY'
+          import os, re
+          from pathlib import Path
+          version = os.environ['RELEASE_VERSION']
+          text = Path('CHANGELOG.md').read_text()
+          match = re.search(r'^## ' + re.escape(version) + r' - [^\n]+\n(.*?)(?=^## |\Z)', text, re.M | re.S)
+          if not match:
+              raise SystemExit('Release section is missing from CHANGELOG.md')
+          temp = Path(os.environ['RUNNER_TEMP'])
+          checksum = (temp / 'release' / f'linux-context-v{version}.tar.gz.sha256').read_text().strip()
+          notes = f'# linux-context v{version}\n\n' + match.group(1).strip() + '\n\n'
+          notes += '## Download and verification\n\nThe attached source archive is built from commit `' + os.environ['RELEASE_COMMIT'] + '`, tested after extraction, and preserves executable script modes.\n\n'
+          notes += 'SHA-256:\n\n```text\n' + checksum + '\n```\n\n'
+          notes += '```bash\nsha256sum -c linux-context-v' + version + '.tar.gz.sha256\ntar -xzf linux-context-v' + version + '.tar.gz\ncd linux-context-v' + version + '\n./bin/linux-context --version\nsudo ./bin/linux-context --profile max\n```\n\nSend `context.ai.json` first; retrieve graph/evidence only as needed. Review diagnostic data before sharing.\n'
+          notes += '\n[Full changelog](https://github.com/' + os.environ['GH_REPO'] + '/blob/v' + version + '/CHANGELOG.md)\n'
+          (temp / 'release-notes.md').write_text(notes)
+          PY
+      - name: Upload draft assets and verify their downloaded bytes
+        if: steps.version.outputs.ready == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          RESUME_DRAFT: ${{ steps.version.outputs.resume }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/release/linux-context-v$RELEASE_VERSION.tar.gz"
+          if [[ "$RESUME_DRAFT" == true ]]; then
+            gh release upload "$RELEASE_TAG" "$archive" "$archive.sha256" --clobber
+            gh release edit "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
+          else
+            gh release create "$RELEASE_TAG" "$archive" "$archive.sha256" \
+              --draft --target "$RELEASE_COMMIT" --title "linux-context $RELEASE_TAG" \
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+          mkdir -p "$RUNNER_TEMP/downloaded"
+          gh release download "$RELEASE_TAG" --pattern 'linux-context-*.tar.gz*' --dir "$RUNNER_TEMP/downloaded"
+          (cd "$RUNNER_TEMP/downloaded" && sha256sum -c "linux-context-v$RELEASE_VERSION.tar.gz.sha256")
+          cmp "$archive" "$RUNNER_TEMP/downloaded/linux-context-v$RELEASE_VERSION.tar.gz"
+          cmp "$archive.sha256" "$RUNNER_TEMP/downloaded/linux-context-v$RELEASE_VERSION.tar.gz.sha256"
+      - name: Publish the verified release
+        if: steps.version.outputs.ready == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          current=$(gh api "repos/$GH_REPO/commits/main" --jq .sha)
+          [[ "$current" == "$RELEASE_COMMIT" ]] || { echo 'Main advanced before publication; draft retained.' >&2; exit 1; }
+          gh release edit "$RELEASE_TAG" --draft=false --latest
+          [[ "$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)" == "$RELEASE_COMMIT" ]]
+          gh release view "$RELEASE_TAG" --json url,isDraft,isPrerelease

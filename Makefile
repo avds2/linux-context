@@ -10,7 +10,7 @@ test:
 syntax: shell-check python-check
 
 shell-check:
-	@find bin collectors lib tests -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+	@find bin collectors lib tests scripts -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
 	@bash -n bin/linux-context
 
 python-check:

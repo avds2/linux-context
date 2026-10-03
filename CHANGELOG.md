@@ -2,63 +2,76 @@
 
 ## Unreleased
 
-Unreleased entries describe changes after the 1.0.0 release, even while the
-checkout's `VERSION` remains 1.0.0. Older sections describe historical behavior,
-not the current acquisition/format contract.
+No changes yet. Unreleased entries describe changes after the latest tagged
+release; older sections record historical behavior.
 
-### Documentation
+## 1.1.0 - 2026-10-03
 
-- Align user, format, collector, contribution and security guides with current
-  main; clarify AI-first retrieval, baseline/target selection, byte-budget scope,
-  incomplete coverage and directory/archive failure boundaries.
-- Add complete collector/profile/API tables and a troubleshooting guide,
-  including the remaining BusyBox setpriv limitation in optional owner probes.
-- Preserve historical audit measurements with exact revision and CI references;
-  distinguish tool/schema/encoding versions and checkout changes from releases.
+### Hardware identification
 
-### Portability, correctness and performance
+- Add standard-tier typed RAM arrays/modules: capacity, DDR type,
+  manufacturer/part number, slots, ECC, rank and rated/configured speeds.
+  Missing tools/access/firmware, unknown sizes and truncated inventories stay
+  explicit. Parse IEC capacity units from newer dmidecode versions.
+- Model CPU topology/cache/selected features, firmware, GPU driver/available
+  VRAM, disks and system battery full/design capacity. Omit module/device serial
+  identifiers and redundant automatic hardware command dumps; retain focused
+  evidence through named targets/all.
 
-- Add lossless AI encoding v2: endpoint references, label/provenance defaults and
-  pooled observations; select the smallest of canonical/v1/v2 encodings and keep
-  backward-compatible decoding. The supplied rich sample shrinks from 114,586
-  canonical bytes (96,592 old AI bytes) to 74,134 bytes without dropping data.
-- Cache collector metadata and initialize stages/hash manifests in single Python
-  passes; batch selected sysctls, reuse package inventories for counts, and share
-  one interpreter across the final redaction/validation/AI/scan/manifest gates.
-- Use sysfs adapters for automatic Bluetooth discovery; reserve bounded BlueZ
-  controller queries for explicit targets (three-second discovery limit).
-- Add Python timeout and owner-handoff fallbacks for minimal/BusyBox userlands;
-  bound detection, collector execution and previously unbounded daemon calls.
-- Read vendor os-release fallback safely, expose PID 1, gate systemd runtime,
-  suppress container reboot guesses, and distinguish installed network clients
-  from running managers and failed LSM queries from disabled protection.
-- Filter residual Debian package records; avoid false zero/exact counts on
-  failed or truncated inventories; support portable filesystem/process/boot/cron
-  observations and preserve IPv6 routes and coexisting firewall state.
-- Observe procfs truncation by actual captured bytes; retain caller shell flags;
-  reject missing worker status/invalid catalog/empty targets and reconcile final
-  redacted evidence/context byte budgets before publication.
-- Add package-family, runtime/fallback, model/privacy, manager-state, final-budget
-  and randomized AI round-trip regressions plus four-distribution container CI.
-- Accept IEC capacity units (GiB/MiB and related sizes) from newer dmidecode
-  output, restoring module/installed capacity and memory-array limits.
-- Bound Bluetooth controller discovery with probe telemetry;
-  failed/truncated discovery leaves the controller count unknown instead of zero.
-- Stop and reap collector process trees before private staging cleanup on INT/TERM
-  or early failure, including producers in GNU timeout's separate process groups.
-- Add hanging/failed/empty/successful Bluetooth and INT/TERM cleanup regressions.
-- Add standard-profile typed SMBIOS RAM arrays/modules with capacity, DDR type,
-  manufacturer/part number, slot/bank, rank, ECC, rated/configured speeds and
-  explicit missing-tool/access/firmware/truncation coverage. Keep serial/asset
-  identifiers out of acquisition output.
-- Add typed CPU topology/cache/selected ISA features, firmware models, GPU PCI
-  name/driver/available VRAM, disk models/transport/capacity, system
-  battery full/design capacity health, available RAM and swap counters.
-- Reduce duplicate hardware text in automatic snapshots; retain focused evidence
-  under named hardware targets and `all`, without changing the schema or budgets.
-- Add a lossless dictionary-coded `context.ai.json` AI view with round-trip
-  validation, residual scanning and manifest/archive coverage.
-- Add hardware parser/sysfs/privacy fixtures and memory-collector integration tests.
+### AI representation and performance
+
+- Add `context.ai.json`, with lossless v1/v2 dictionaries for graph names,
+  endpoints, labels, provenance and repeated observations. Select the smallest
+  canonical/v1/v2 representation; preserve types/conflicts and validate round trips.
+  Canonical schema v5 and older v1 decoding remain supported.
+- Re-encoding the supplied rich sample reduced the previous AI file from 96,592
+  to 74,134 bytes (23.3%); no data was dropped. This is a byte measurement, not a
+  tokenizer result or a universal size guarantee.
+- Cache collector metadata, batch stage initialization/checksums/finalization,
+  reuse package inventories and batch selected sysctls. Five alternating local
+  before/after pairs reduced median quick/standard/max elapsed time by
+  42.5%/17.7%/3.9%; hardware/daemon performance varies. See `docs/AUDIT.md`.
+- Use sysfs Bluetooth adapter counts automatically; query BlueZ only for focused
+  bluetooth/workstation/all targets with a three-second discovery limit. Failed
+  or truncated discovery leaves controller counts unknown.
+
+### Portability and correctness
+
+- Add Python timeout/owner-handoff paths and portable statvfs/procfs/boot/cron
+  observations. Bound metadata/detection and collector acquisition, and stop
+  nested producer trees before cleanup on timeout, failure or INT/TERM.
+- Safely parse vendor os-release fallback, expose PID 1, require systemd runtime,
+  distinguish clients from running managers, and keep failed protection queries
+  separate from disabled LSM state. Avoid container reboot guesses.
+- Filter Debian residual package records; avoid false zero/exact counts on failed
+  or truncated inventories. Preserve IPv6 routes and coexisting firewall evidence.
+- Detect procfs truncation from captured bytes, preserve caller shell flags,
+  reject malformed catalogs/missing worker status/empty targets, and reconcile
+  final sanitized evidence/context budgets and graph integrity before publication.
+
+### Documentation and release delivery
+
+- Rewrite and align user/consumer/developer/security guides with current code;
+  document the full 25-collector catalog, profile settings and collector API.
+  Add troubleshooting and update issue/PR templates.
+- Add reproducible source packaging from the committed tree and SHA-256 assets.
+  Successful trusted main CI triggers release preparation; extracted archives
+  pass checks/smoke and uploaded draft bytes are verified before publication.
+
+### Validation and limits
+
+- 31 regression scripts cover package families, models, managers, privacy,
+  timeout/tree cleanup, final budgets and type-sensitive AI round trips.
+  CI covers Python 3.9/3.11/3.13 plus Debian 12, Fedora 43, Arch and Alpine 3.22,
+  including all-profile archive/manifest/AI/privacy smoke checks.
+- Container CI does not establish every live hardware/init/desktop configuration.
+  Native Gentoo/Nix/Slackware package inventories remain outside current support.
+- Optional per-user runner probes still select setpriv by presence and can fail
+  with BusyBox setpriv under sudo without runuser. Publication handoff has the
+  capability-aware Python fallback; see `docs/TROUBLESHOOTING.md` for the gap.
+- Canonical/evidence byte ceilings do not cap full graph/metadata, transient
+  acquisition or total archive size. Review bundles before sharing; zero known
+  high-confidence residuals does not prove arbitrary content secret-free.
 
 ## 1.0.0
 
